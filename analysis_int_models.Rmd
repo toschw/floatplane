@@ -1,0 +1,250 @@
+---
+title: "Floatplane data analysis"
+author: "Tobias Schwoerer"
+date: "March 6, 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+#Data preparation
+Importing and recoding data, creating subset of personal flights
+```{r}
+library(survival)
+library(ggplot2)
+library(GGally)
+library(rgl)
+library(foreign)
+library(dplyr)
+library(tidyr)
+library(data.table)
+
+#data <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/Destinations091916_4.csv",stringsAsFactor=FALSE)
+data <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/Destinations091916_4.csv",stringsAsFactor=FALSE)
+#new variable for change in flight trips
+data$Fchange <- data$ContFlight - data$AnnualFl_1
+data$FchangeType <- with(data, ifelse(Fchange<0,"reduce",ifelse(Fchange>0,"increase","no_change")))
+
+#cleaning -999 from income, sheep2, moose, and caribou
+data$income[data$income == -999] <- NA
+data$sheep2[data$sheep2 == -999] <- NA
+data$moose[data$moose == -999] <- NA
+data$caribou[data$caribou == -999] <- NA
+
+#cleaning up some unnecessary columns
+data <- select(data, -SampleID, -FID_1, -OBJECTID, -UNIQUE_ID, -Map, -Destinat_5, -Destinat_6, -Destinat_7, -Destinat_8, -WaterBodyD, -AreaAcres, -AreaSqKm, 
+-States, -ElevMIN, -ElevMAX, -ElevSTD, -ElevMEAN, -Access, -kmrev, -Cnt_HUC6, -Sum_Ac2to4, -Sum_Ac1, -Min_AreaSq, -Ac1psqk, -FID_2, -FID_1_1__1,
+ -Shape_Leng, -Shape_Area, -SqMi, -Sum_OBJECT, -Sum_Latitu, -Sum_Longit, -OBJECTID_1, -StartID_1, -DestStartI, -OID_, -Dest_Acres,-comm_surve, -REVspfish, -REVview, -REVhunt, -REVother, -REVdev, -REVcabn, -wpriceh, -kingm, -Ac2to4psqk, -Region, -UnitSub, -SubLabel, -SubLetter, -Count_, -Sum_angler, -Subregion, -Subregion_, -Region_1, -Region_2, -SubLabel_1, -Sum_angl_1, -Sum_catch1, -CPUEsubuni, -UniqueID, -StartLat_1, -StartLon_2, -DestName_1, -ElodeaDe_1, -medianrank, -modelID, -DestID_1, -mean, -SD, -min, -X25th, -median, -X75th, -max, -SurveyData, -Surarea, -Area_Label)
+
+#subset for personal flights
+private <- subset(data, Source=="private")
+
+#recoding intervals for actual recorded number of flights
+private$lAf <- with(private, ifelse(AnnualFlig=="lt10",0,ifelse(AnnualFlig=="10-25",10,ifelse(AnnualFlig=="25to50",25,ifelse(AnnualFlig=="50to75",50,75)))))
+private$uAf <- with(private, ifelse(AnnualFlig=="lt10",9,ifelse(AnnualFlig=="10-25",24,ifelse(AnnualFlig=="25to50",49,ifelse(AnnualFlig=="50to75",74,100)))))
+
+#creating categorical variable for the flight frequency intervals for use in ordered probit 
+private$FintCat <- with(private, ifelse(AnnualFlig=="lt10",1,ifelse(AnnualFlig=="10-25",2,ifelse(AnnualFlig=="25to50",3,ifelse(AnnualFlig=="50to75",4,5)))))
+private$FintCat <- as.factor(private$FintCat)
+
+#recoding intervals for contingency number of flights under hypothetical elodea invasions
+private$lCAf <- with(private, ifelse(ContinuedF=="",0,ifelse(ContinuedF=="lt10",0,ifelse(ContinuedF=="10-25",10,ifelse(ContinuedF=="25to50",25,ifelse(ContinuedF=="50to75",50,75))))))
+private$uCAf <- with(private, ifelse(ContinuedF=="",1,ifelse(ContinuedF=="lt10",9,ifelse(ContinuedF=="10-25",24,ifelse(ContinuedF=="25to50",49,ifelse(ContinuedF=="50to75",74,100))))))
+
+#creating categorical variable for the flight frequency intervals post elodea invasion for use in ordered probit 
+private$FintCatE <- with(private, ifelse(ContinuedF=="",0,ifelse(ContinuedF=="lt10",1,ifelse(ContinuedF=="10-25",2,ifelse(ContinuedF=="25to50",3,ifelse(ContinuedF=="50to75",4,5))))))
+private$FintCatE <- as.factor(private$FintCatE)
+
+#adding age
+age <- read.csv("RData/age.csv")
+private2 <- private%>%
+  left_join(age, by=c('Respondent'='ResponseID'))
+
+#writing dataset
+#write.csv(private2, file="C:/Users/Toby/Dropbox/DATA/Schwoerer_floatplane_survey/Destinations031219.csv")
+```
+
+#modeling flight frequency intervals as the outcome
+##preparing dataset for regression analysis
+```{r}
+library(survival)
+library(ggplot2)
+library(GGally)
+library(rgl)
+library(foreign)
+library(dplyr)
+library(tidyr)
+library(data.table)
+
+#creating combination of two sets that are stacked, first set with reported flight intervals, second set with contingent flight intervals
+columns <- c("plntype", "age", "tacho", "Dest_sqkm", "Visits", "Cost", "chinook_1", "anglerda_1", "sockeye_1", "income", "Fetch_m", "caribou", "sheep2", "moose", "Distance_k", "income", "catch", "maxlegkm", "pax", "zip","ID")
+
+
+regD1 <- select(private2, uAf, lAf, FintCat, columns)
+regD2 <- select(private2, uCAf, lCAf, FintCatE, columns)
+
+regD1$elodea <- 0
+regD2$elodea <- 1
+setnames(regD2, old=c("uCAf","lCAf","FintCatE"), new=c("uAf", "lAf","FintCat"))
+
+regData <- bind_rows(regD1, regD2)
+
+#additional data manipulations, setting dummy variables and the Respondent ID as factors
+regData$midpt <- with(regData, round((uAf+lAf)/2,digits=0))
+regData$FintCat <- as.factor(regData$FintCat)
+regData$elodea <- as.factor(regData$elodea)
+regData$plntype <- as.factor(regData$plntype)
+regData$zip <- as.factor(regData$zip)
+regData$ID <- as.factor(regData$ID)
+
+
+#write.csv(regData, file="C:/Users/Toby/Dropbox/DATA/Schwoerer_floatplane_survey/stacked.csv")
+write.csv(regData, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/stacked.csv")
+
+#plotting correlation
+plotData <- select(regData, uAf, lAf, Cost, tacho, plntype, maxlegkm, elodea)
+#ggpairs(plotData, lower = list(combo = "box"), upper = list(combo = "blank"))
+```
+
+#Fixed effects model
+model indicates the model to be estimated : "pooling" is just the OLS estimation (equivalent to a call to lm), "between" performs the estimation on the individual or time means, "within" on the deviations from the individual or/and time mean, "fd" on the first differences and "random" perform a feasible generalized least squares estimation which takes into account the correlation induced by the presence of individual and/or time effects.
+```{r}
+library(plm)
+fixed <- plm(midpt ~ Cost + elodea +  tacho  + income +  age + Visits , data=regData, index = "ID", model="pooling", effect = "individual")
+summary(fixed)
+```
+
+#Poisson regression with robust SE
+```{r}
+m1 <- glm(formula = midpt ~ Cost + elodea +  tacho  + income +  age + Visits , family = "poisson", data = regData)
+summary(m1)
+cov.m1 <- vcovHC(m1, type="HC0")
+std.err <- sqrt(diag(cov.m1))
+r.est <- cbind(Estimate= coef(m1), "Robust SE" = std.err,
+"Pr(>|z|)" = 2 * pnorm(abs(coef(m1)/std.err), lower.tail=FALSE),
+LL = coef(m1) - 1.96 * std.err,
+UL = coef(m1) + 1.96 * std.err)
+
+r.est
+```
+
+Testing for overdispersion according to Cameron and Trivedi (1990)
+```{r}
+library(AER)
+rd <- glm(midpt ~ ., data = regData, family = poisson)
+dispersiontest(rd,trafo=NULL)
+```
+Result of dispersion test, p-value=1, alpha =0.3296, therefore overdispersion exists since alpha > 0
+
+#Negative binomial
+```{r}
+library(MASS)
+summary(m1 <- glm.nb(midpt ~ Cost + elodea +  tacho  + income +  age + Visits , data = regData))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#Interval regression
+setting up survival object with interval censoring
+```{r}
+#setting up survival object
+Y <- with(regData, Surv(lAf, uAf, event = rep(3, nrow(regData)), type = "interval"))
+m <- survreg(Y ~ elodea + Cost +  tacho + plntype + maxlegkm + pax + age , data = regData, dist = "gaussian")
+summary(m)
+```
+
+#Standard ordered logit and probit models
+Source: https://stats.idre.ucla.edu/r/dae/ordinal-logistic-regression/
+Also see: https://cran.r-project.org/web/packages/oglmx/vignettes/oglmxVignette.pdf
+```{r}
+require(foreign)
+require(ggplot2)
+require(MASS)
+require(Hmisc)
+require(reshape2)
+## fit ordered logit model and store results 'op'
+op <- polr(FintCat ~ elodea + Cost +  tacho + plntype + maxlegkm + pax + age, data = regData, Hess=TRUE, method = "probit")
+
+op <- polr(FintCat ~ elodea + Cost +  tacho + plntype + maxlegkm + pax + age, data = regData, Hess=TRUE, method = "logistic")
+
+## view a summary of the model
+summary(op)
+
+#adding p-values
+## store table
+ctable <- coef(summary(op))
+## calculate and store p values
+x <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+
+## combined table
+ctable <- cbind(ctable, "p value" = x)
+ctable
+```
+
+#Simple robust linear model, also Breusch-Pagan test 
+```{r}
+#linear model
+library(MASS)
+model <- rlm(midpt ~ Cost + elodea, data = regData )
+summary(model)
+
+library(olsrr)
+ols_test_breusch_pagan(model)
+
+library(lmtest)
+bptest(model)
+```
+
+Heteroskedasticity is a problem. Let's save the residuals and use them as a predictor
+```{r}
+res <- model$residuals
+#adding residuals column to the data
+regData2 <- cbind(regData, res)
+#re-running model from above
+model <- lm(midpt ~ Cost + elodea + res, data = regData2 )
+summary(model)
+```
+
+we can also use a Box-cox transformation
+Source: https://www.r-bloggers.com/how-to-detect-heteroscedasticity-and-rectify-it/
+```{r}
+library(timeDate)
+library(caret)
+skewness(regData$midpt, na.rm=T)  # 2.613544, highly skewed
+
+distBCMod <- BoxCoxTrans(regData$midpt)
+print(distBCMod)
+```
+result: Lambda could not be estimated; no transformation is applied.
+
+
+#Ordered probit using oglmx package
+Source: https://cran.r-project.org/web/packages/oglmx/vignettes/oglmxVignette.pdf
+```{r}
+library(oglmx)
+results.oprob<-oglmx(FintCat ~ elodea + Cost +  tacho + plntype + maxlegkm + pax + age, data=regData, link="probit",constantMEAN = FALSE, constantSD = FALSE,delta=0,threshparam = NULL)
+
+results.oprob1<-oprobit.reg(FintCat ~ elodea + Cost +  tacho + plntype + maxlegkm + pax + age, data=regData)
+summary(results.oprob)
+
+```
+
