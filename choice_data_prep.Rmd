@@ -1,0 +1,86 @@
+---
+title: "choice model data preparation"
+author: "Tobias Schwoerer"
+date: "March 22, 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Importing data, setting aside individual specific characteristics, identifying each pilot's stated 2016 priority region based on the maximum proportion of flights the pilot took into that region
+```{r}
+library(tidyr)
+library(dplyr)
+library(data.table)
+
+cdata <- read.csv("Data/new_data_w_elodeaalt3xprivate110718.csv")
+
+#individual pilot specific data 
+indvData <- cdata%>%
+  subset(set==1)%>%
+  select(id, alt, cost, age, weight, flights, income, flightsnew, sharenew, choice)
+
+#revealed priority region (from set 1, recorded, nonhypothetical)
+regionPref <- indvData%>%
+  group_by(id)%>%
+  arrange(desc(sharenew),alt) %>%
+  slice(1)%>%
+  select(id,alt)
+```
+
+
+pilots who have more than one region selected in set 2
+```{r}
+multi <- cdata%>%
+  subset(set==2)%>%
+  group_by(id)%>%
+  summarise(sum=sum(choice))%>%
+  subset(sum>1)
+#adding priority region 
+multi <- multi%>%
+  left_join(regionPref, by="id")
+```
+
+#Creating truly binary choice data set
+here the region "chosen" in the second hypothetical (contingent) part of the panel is based on the maximum proportion of flights into the region. 
+```{r}
+#Setting choice in set 1 equal to priority region from above, creating new variable choice2 to do this
+cdata2 <- cdata%>%
+  left_join(regionPref, by="id")
+
+cdata2$choice2 <- with(cdata2, ifelse(set==1 & alt.x==alt.y, 1,0)) 
+```
+
+Note, choice in set 2 is already set to the maximum proportion of flights into that region, except where there are equal proportions.
+These pilots are contained in multi above. For them, the priority region from above was inferred.
+```{r}
+cdata2 <- cdata2%>%
+  left_join(multi)
+
+#setting choice in set 2, creating new variable choice3 to do this
+cdata2$choice3 <- with(cdata2, ifelse(set==2 & alt.x==alt, 1,0)) 
+
+#combining choice, choice2, and choice3 by creating final choice variable choiceF
+cdata2$choiceF <- with(cdata2, ifelse(is.na(choice3),choice,ifelse((set==1), choice2,choice3)))
+```
+
+testing if calculations are correct
+```{r}
+test <- cdata2%>%
+  group_by(id,set)%>%
+  summarise(sum(choiceF))
+```
+Correct, there is only one region selected per set now
+
+#Creating dataset for estimation
+```{r}
+#eliminating columns we won't need
+cdata3 <- cdata2%>%
+  select(-c("choice","choice2","choice3","alt","sum","alt.y","wgt1","wave","contflights","contflightsw","wgtc","elightsw","wgte","share","weight","sharenew","flights","flightsw","eflights"))
+
+#renaming columns
+setnames(cdata3, old=c("alt.x","elodeanew","flightsnew","flightsneww","choiceF"), new=c("alt", "elodea","flights","flights_w","choice"))
+
+#writing file to dropbox
+write.csv(cdata3, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/choice_data032219.csv")
+```

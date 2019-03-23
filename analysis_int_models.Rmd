@@ -85,6 +85,8 @@ regD2 <- select(private2, uCAf, lCAf, FintCatE, columns)
 
 regD1$elodea <- 0
 regD2$elodea <- 1
+
+#renaming columns
 setnames(regD2, old=c("uCAf","lCAf","FintCatE"), new=c("uAf", "lAf","FintCat"))
 
 regData <- bind_rows(regD1, regD2)

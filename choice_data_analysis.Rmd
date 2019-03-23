@@ -1,0 +1,60 @@
+---
+title: "Choice data analysis"
+author: "Tobias Schwoerer"
+date: "March 22, 2019"
+output: html_document
+---
+
+Importing data and initializing packages
+Source for mlogit: https://cran.r-project.org/web/packages/mlogit/vignettes/c5.mxl.html
+```{r}
+library(mlogit)
+
+data <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/choice_data032219.csv")
+data <- select(data, -X)
+mdata <- mlogit.data(data, choice="choice",shape="long",id.var="id",alt.var="alt",alt.levels = c("food","plate"))
+```
+
+Pilot characteristics
+```{r}
+stacked <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/stacked.csv") 
+charac <- stacked[!duplicated(stacked[,'ID']),]
+charac <- select(charac, ID, plntype, tacho, maxlegkm, zip)
+```
+
+Adding pilot characteristics to the above choice data
+```{r}
+library(dplyr)
+library(tidyr)
+
+data2 <- data%>%
+  left_join(charac, by = c("id"="ID"))
+```
+
+Various models
+```{r}
+rpl <- mlogit(choice ~ cost + moose + sheep , mdata, varying = 4:8,
+              shape = 'long',  alt.var="alt", id.var="id", choice="choice", group.var="set", 
+            method = "bfgs", heterosc = TRUE)
+
+hl <- mlogit(choice ~ cost + moose + visits , mdata,
+             shape = "long",  alt.var = "alt",
+             method = "bfgs", heterosc = TRUE, tol = 10)
+
+ml <- mlogit(choice ~ cost + sheep + moose + age | income, mdata, method = "bfgs", heterosc = TRUE, tol=10 )
+summary(ml)
+
+summary(mlogit(choice ~ cost + elodea | income, data = mdata))
+
+summary(rpl)
+rpar(rpl)
+cor.mlogit(rpl)
+cov.mlogit(rpl)
+rpar(rpl, "cost")
+summary(rpar(rpl, "cost"))
+
+#rpar = c(cost= 'n'),panel=TRUE,,
+             # R = 10, tol = 10, print.level = 0)  correlation = TRUE, halton = NA, 
+```
+
+None of the above ran. All had error: "the system is computationally singular"
