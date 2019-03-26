@@ -22,8 +22,7 @@ library(ggplot2)
 library(RColorBrewer)
 library(leaflet.minicharts)
 
-
-setwd("D:/ANALYSIS_R/floatplane")
+#setwd("D:/ANALYSIS_R/floatplane")
 data <- read.csv("STAN/flights_model/datafit.csv")
 
 #subsetting data
@@ -156,4 +155,20 @@ clickMap1 <- leaflet(lakes, width = "100%", height = 1000) %>%
       )%>%
   addLegend("topright",values= ~p50th, pal=pal, title="median probability")
 clickMap1
+```
+
+Still need to include elodea variable in data setup above for lakes that are known to have elodea
+Validation of the model with elodea presence
+```{r}
+c1 <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/STANresults.csv", stringsAsFactors = F)
+with(test, plot(p50th, elodea))
+
+elodeaLakes <- c1%>%
+  group_by(elodea)%>%
+    summarise(countHigh = sum(ifelse(p50th>0.5,1,0)),
+              countLow = sum(ifelse(p50th<=0.5,1,0))) 
+              
+              
+              
+	  t1t = sum( ifelse( c1 == "t", v1, 0 ) )
 ```
