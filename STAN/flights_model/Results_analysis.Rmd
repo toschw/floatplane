@@ -179,7 +179,7 @@ clickMap1 <- leaflet(lakes, width = "100%", height = 1000) %>%
 clickMap1
 ```
 
-Still need to include elodea variable in data setup above for lakes that are known to have elodea
+
 Validation of the model with elodea presence
 ```{r}
 elodeaLakes <- results3%>%
