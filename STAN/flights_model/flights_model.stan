@@ -24,7 +24,7 @@ model {
 }
 generated quantities {
   real<lower=0,upper=1> avg; // avg success
-  int<lower=0,upper=1> above_avg[J]; // true if j is above avg
+  int<lower=0,upper=1> above_avg[J]; // true if theta[j] > mean(theta), meaning the posterior prob. that a given destination is above-average in terms of the elodea introduction rate
   int<lower=1,upper=J> rnk[J]; // rank of j
   int<lower=0,upper=1> highest[J]; // true if j is highest rank
   avg = mean(theta);

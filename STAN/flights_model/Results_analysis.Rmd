@@ -36,24 +36,36 @@ Creating a reference table with destination-specific information
 #importing reference table for destination information and association to theta[id]
 ref <- read.csv("Data/Destinations091916_4.csv", stringsAsFactors = FALSE)
 
-#cleaning up come unnecessary columns
-keepCol <- c("Destina_11","WithinNPS_","WithinRefu","HUC8","Suitab","HUC6","Name","GMU","UniqueID","Fetch_m","ElevMIN","ElevMAX","Dest1Lat","Dest2Long","DestName","X25th","median","X75th","medianrank","Dest_sqkm","modelID")
-ref <- dplyr::select(ref, keepCol)
+#adding Sucker Lake as a new ElodeaDest = 1
+ref$ElodeaDest <- with(ref,ifelse(UniqueID=="Lk_312858",1,ElodeaDest))
+
+#adding a variable about suspected Floatplane introductions, SusFPintro
+FPintro <- read.csv("Data/SusFPintro.csv", stringsAsFactors = F)
+#drop name column
+FPintro <- select(FPintro, UniqueID, SusFPintro)
+ref2 <- ref%>%
+  left_join(FPintro, by='UniqueID')
+ref2$SusFPintro <- ref2$SusFPintro %>%
+  replace_na(0)
+
+#cleaning up some unnecessary columns
+keepCol <- c("Destina_11","WithinNPS_","WithinRefu","HUC8","Suitab","HUC6","Name","GMU","UniqueID","Fetch_m","ElevMIN","ElevMAX","Dest1Lat","Dest2Long","DestName","X25th","median","X75th","medianrank","Dest_sqkm","modelID","ElodeaDest", "SusFPintro")
+ref3 <- dplyr::select(ref2, keepCol)
 
 #there are multiple lat long pairs possible for each UniqueID, but since the analysis is by destination waterbody (among all 727 identified) we chose just one lat long per UniqueID. extracting unique records so each destination is represented in each row
 #So we used 
-ref = ref[!duplicated(ref$UniqueID),]
+ref3 = ref3[!duplicated(ref3$UniqueID),]
 #Instead of:
 #IDs <- unique(ref$UniqueID)
 #ref <- subset(ref, UniqueID %in% IDs)
 
 #renaming columns
-setnames(ref, old=c("Destina_11","WithinNPS_","Name","Dest1Lat","Dest2Long"), new=c("DestType", "WithinNPS","RegionName","Lat","Long"))
+setnames(ref3, old=c("Destina_11","WithinNPS_","Name","Dest1Lat","Dest2Long"), new=c("DestType", "WithinNPS","RegionName","Lat","Long"))
 #ordering by modelID number shown in [] brackets
-ref$LakeID <- gsub(".*\\[|\\]", "", ref$modelID) 
-ref$LakeID <- as.numeric(ref$LakeID)
+ref3$LakeID <- gsub(".*\\[|\\]", "", ref3$modelID) 
+ref3$LakeID <- as.numeric(ref3$LakeID)
               
-ref = ref[order(ref[,'LakeID']),]
+ref3 = ref3[order(ref3[,'LakeID']),]
 ```
 
 25th, median, 75th percentile
@@ -107,7 +119,7 @@ setnames(ranksR, old=c("vars"),new=c("vars2"))
 
 Combining results and adding destination specific information
 ```{r}
-results <- cbind(drawsR, abavgR,ranksR,varR,ref)
+results <- cbind(drawsR, abavgR,ranksR,varR,ref3)
 #dropping a few unnecessary columns
 
 results <- results%>%
@@ -128,13 +140,23 @@ Dropping pilot ratio model results from results, writing to csv file
 results2 <- results%>%
   select(-X25th, -median, -X75th, -medianrank)
 results2$inv_variance = 1/results2$variance
-write.csv(results2, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/STANresults.csv")
+
+#adding raw data
+rawFlights <- read.csv("STAN/floatplanedata4.csv", stringsAsFactors = F)
+#make sure keys are both integer, then joining
+results2$LakeID <- as.integer(results2$LakeID)
+rawFlights$ID <- as.integer(rawFlights$ID)
+results3 <- results2%>%
+  left_join(rawFlights,by=c('LakeID'='ID'))
+#drop columns
+results3 <- select(results3,-name,-lakeID)
+write.csv(results3, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/STANresults.csv")
 ```
 
 graphing and mapping
 ```{r}
 #creating subset of destinations with a median prob >0.8
-lakes <- subset(results2, p50th>0.8)
+lakes <- subset(results3, p50th>0.8)
 # Create a continuous palette function
 pal <- colorNumeric(
   palette = "Reds",
@@ -147,7 +169,7 @@ clickMap1 <- leaflet(lakes, width = "100%", height = 1000) %>%
   addProviderTiles(providers$Esri.WorldTopoMap, group = "Esri Topo")%>%
   addProviderTiles(providers$Esri.WorldImagery, group = "Esri Image")%>%
   #Overlay groups
-  addCircleMarkers(lat = ~Lat, lng = ~Long, ~p50th, radius = ~inv_variance/10000, stroke=F,  
+  addCircleMarkers(lat = ~Lat, lng = ~Long, ~p50th, radius = ~inv_variance/10000, stroke=T,  
                    color= ~pal(p50th), fillOpacity = 1, weight = 25)%>%
     #Layers control
   addLayersControl(
@@ -160,15 +182,11 @@ clickMap1
 Still need to include elodea variable in data setup above for lakes that are known to have elodea
 Validation of the model with elodea presence
 ```{r}
-c1 <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/STANresults.csv", stringsAsFactors = F)
-with(test, plot(p50th, elodea))
-
-elodeaLakes <- c1%>%
-  group_by(elodea)%>%
+elodeaLakes <- results3%>%
+  group_by(SusFPintro)%>%
     summarise(countHigh = sum(ifelse(p50th>0.5,1,0)),
               countLow = sum(ifelse(p50th<=0.5,1,0))) 
               
-              
-              
-	  t1t = sum( ifelse( c1 == "t", v1, 0 ) )
+eLakes <- subset(results3, SusFPintro==1)
+eLakes <- select(eLakes, DestName, variance, inv_variance, p50th, mean_abavg, flights,eflights )
 ```
