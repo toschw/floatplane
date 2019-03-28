@@ -21,14 +21,6 @@ library(leaflet)
 library(ggplot2)
 library(RColorBrewer)
 library(leaflet.minicharts)
-
-#setwd("D:/ANALYSIS_R/floatplane")
-data <- read.csv("STAN/flights_model/datafit.csv")
-
-#subsetting data
-draws <- select(data,2:728)
-abavg <- select(data,734:1460 ) 
-ranks <- select(data,1461:2187)
 ```
 
 Creating a reference table with destination-specific information
@@ -67,6 +59,18 @@ ref3$LakeID <- as.numeric(ref3$LakeID)
               
 ref3 = ref3[order(ref3[,'LakeID']),]
 ```
+
+Creating our own fit summary from datafit object, ignoring the fit_summary1.csv file for now
+```{r}
+#setwd("D:/ANALYSIS_R/floatplane")
+data <- read.csv("STAN/flights_model/datafit.csv")
+
+#subsetting data
+draws <- select(data,2:728)
+abavg <- select(data,734:1460 ) 
+ranks <- select(data,1461:2187)
+```
+
 
 25th, median, 75th percentile
 ```{r}
@@ -119,6 +123,10 @@ setnames(ranksR, old=c("vars"),new=c("vars2"))
 
 Combining results and adding destination specific information
 ```{r}
+fitS <- read.csv("STAN/flights_model/fit_summary1.csv")
+
+  
+
 results <- cbind(drawsR, abavgR,ranksR,varR,ref3)
 #dropping a few unnecessary columns
 
@@ -150,7 +158,12 @@ results3 <- results2%>%
   left_join(rawFlights,by=c('LakeID'='ID'))
 #drop columns
 results3 <- select(results3,-name,-lakeID)
-write.csv(results3, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/STANresults.csv")
+#adding names for HUC8 units
+huc <- read.csv("Data/huc_codes.csv")
+results3$HUC8 <- as.integer(results3$HUC8)
+results3 <- results3%>%
+  left_join(huc,by=c('HUC8'='code'))
+write.csv(results3, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/STANresults.csv",row.names = FALSE)
 ```
 
 graphing and mapping
@@ -169,7 +182,7 @@ clickMap1 <- leaflet(lakes, width = "100%", height = 1000) %>%
   addProviderTiles(providers$Esri.WorldTopoMap, group = "Esri Topo")%>%
   addProviderTiles(providers$Esri.WorldImagery, group = "Esri Image")%>%
   #Overlay groups
-  addCircleMarkers(lat = ~Lat, lng = ~Long, ~p50th, radius = ~inv_variance/10000, stroke=T,  
+  addCircleMarkers(lat = ~Lat, lng = ~Long, ~p50th, radius = ~inv_variance/1000, stroke=T,  
                    color= ~pal(p50th), fillOpacity = 1, weight = 25)%>%
     #Layers control
   addLayersControl(
@@ -189,4 +202,17 @@ elodeaLakes <- results3%>%
               
 eLakes <- subset(results3, SusFPintro==1)
 eLakes <- select(eLakes, DestName, variance, inv_variance, p50th, mean_abavg, flights,eflights )
+```
+
+
+Risk-ordered subset of NPS lakes at risk
+```{r}
+NPS <- subset(results3,WithinNPS==1)
+
+#risk order
+NPS2 <- NPS%>%
+  filter(p50th >0.5)%>%
+  arrange(desc(p50th),desc(inv_variance))
+NPS2$RiskIndex <- seq.int(nrow(NPS2))
+write.csv(NPS2, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/nps_lakes_modeled.csv",row.names = FALSE)
 ```
