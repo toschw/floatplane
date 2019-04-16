@@ -48,27 +48,6 @@ Posterior summary for just Martin lake (highest theta of all 727 destinations) a
 print(datafit1,pars=c("theta[322]","avg"))
 ```
 
-Scatter plot of observed versus estimated  using the csv generated from STEP3 
-```{r}
-library(plyr)
-library(ggplot2)
-sdata <- fit_summary.df
-##renaming columns of above data frame
-names(sdata)[4:8] <- c("perc3","perc25","perc50","perc75","perc97")
-
-Figure2.3 <-  ggplot(sdata, aes(x=sdata$ratio,y=sdata$X50.)) +
-  geom_pointrange(aes(ymin=sdata$perc3, ymax=sdata$perc97)) + 
-  xlab("observed AIS introduction rate")+ ylab("95% posterior interval for theta(j)") +
-  ylim(0,1)+ xlim(0,1) + geom_jitter(height=0,width=0.1)+ geom_abline(intercept = 0, slope = 1,colour='red')+
-  theme(axis.title.x = element_text(face="bold", colour="#000000", size=15),
-        axis.text.x  = element_text(face="bold", angle=0, vjust=0.5, size=15)) +
-  theme(axis.title.y = element_text(face="bold", colour="#000000", size=15),
-        axis.text.y  = element_text(face="bold", angle=360, vjust=0.5, size=15))+
-  theme(panel.background = element_rect(fill = 'white', colour="black"))
-Figure2.3 <- Figure2.3 + geom_point() + geom_text(data=subset(sdata,labels==1),aes(x=sdata$ratio,y=sdata$X50.,label=names))
-Figure2.3
-```
-
 # Figure: Posterior probability distributions for elodea-infested destination lakes and suspected eldoea-infested lakes
 ```{r}
 library(ggplot2)
@@ -76,7 +55,7 @@ library(rstan)
 fig <- plot(datafit1, show_density = TRUE, pars=c("theta[321]","theta[322]","theta[324]","theta[376]","theta[518]","theta[300]","theta[309]","theta[376]","theta[347]","theta[570]","theta[10]",'theta[513]',"avg"), ci_level = 0.5, fill_color = "#99d8c9")
 chvector <- character(length=9)
 chvector <- c("Average","Lockwood Lake","Fish Lakes", "Finger Lake","Lake Hood","Daniels Lake","Stormy Lake","Alexander Lake","Sucker Lake","McKinley Lake","Martin Lake","Bering Lake")
-fig <- fig + scale_y_continuous(labels=chvector[1:12],breaks=1:12) + ggtitle("Introduction rate posteriors") + labs(x="data")
+fig <- fig + scale_y_continuous(labels=chvector[1:12],breaks=1:12) + labs(x="95% posterior for theta(j)")
 fig 
 ```
 
@@ -126,7 +105,7 @@ hist(y,xlab="",main="y")
 for (s in 1:19)
   hist(y_rep[s,], xlab="",main=paste("y_rep",s))
 
-#numerical test statistic using max (A) and min (B) number of pilots from elodea-infested floatplane bases
+#numerical test statistic using max (A) and min (B) introduction number of pilots from elodea-infested floatplane bases
 #For generating Figure2.7A set y_sort[1]-y_sort[2], for Figure2.7B set y_sort[726]-y_sort[727]
 
 test <- function (y){
@@ -209,4 +188,34 @@ for (j in 1:J){
   test[j,] <-mean(data_sims$theta[1:2000,j:8]) 
   }
 test[J,]
+```
+
+#Figure
+Shrinkage plotting observed introduction rates versus posterior medians with 95% posterior interval
+```{r}
+library(plyr)
+library(dplyr)
+library(ggplot2)
+sdata <- read.csv("STAN/flights_model/fit_summary1.csv")
+data <-  read.csv("STAN/floatplanedata4.csv")
+data$rate <- data$eflights/data$flights
+
+##renaming columns of above data frame
+names(sdata)[5:9] <- c("perc3","perc25","perc50","perc75","perc97")
+#selecting first 729 rows for the draws
+sdata2 <- sdata[1:727,]
+sdata2 <- cbind(sdata2,data)
+
+
+Figure2.3 <-  ggplot(sdata2, aes(x=sdata2$rate,y=sdata2$perc50)) +
+  geom_pointrange(aes(ymin=sdata2$perc3, ymax=sdata2$perc97)) + 
+  xlab("observed introduction rate")+ ylab("95% posterior interval for theta(j)") +
+  ylim(0,1)+ xlim(0,1) + geom_jitter(height=0,width=0.1)+ geom_abline(intercept = 0, slope = 1,colour='red')+
+  theme(axis.title.x = element_text(face="bold", colour="#000000", size=15),
+        axis.text.x  = element_text(face="bold", angle=0, vjust=0.5, size=15)) +
+  theme(axis.title.y = element_text(face="bold", colour="#000000", size=15),
+        axis.text.y  = element_text(face="bold", angle=360, vjust=0.5, size=15))+
+  theme(panel.background = element_rect(fill = 'white', colour="black"))
+Figure2.3 <- Figure2.3 + geom_point() + geom_text(data=subset(sdata2,labels==1),aes(x=sdata2$rate,y=sdata2$perc50,label=names))
+Figure2.3
 ```
