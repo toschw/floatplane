@@ -125,7 +125,6 @@ Combining results and adding destination specific information
 ```{r}
 fitS <- read.csv("STAN/flights_model/fit_summary1.csv")
 
-  
 
 results <- cbind(drawsR, abavgR,ranksR,varR,ref3)
 #dropping a few unnecessary columns
@@ -147,26 +146,45 @@ title("Comparing pilot ratio to flight ratio models")
 ```{r}
 library(ggplot2)
 library(ggrepel)
-
+library(dplyr)
+library(tidyr)
+results2 <- results%>%
+  select(-X25th, -median, -X75th, -medianrank)
+results2$inv_variance = 1/results2$variance
 #creating log of inverse variance for easier plotting
 results2$lginvar <- log(results2$inv_variance)
 #creating new name variable to eliminate unknown lakes cluttering the labels
 results2$DestName2<- with(results2, ifelse(DestName=="<unknown/unnamed>","",DestName))
+#fixing names for Kahiltna Glacier Lake
+results2$DestName2<- with(results2, ifelse(DestName2=="Kahiltna Glacier","Kahiltna Gl. Lake",DestName2))
 #creating risk category / quadrants in scatterplot
-results2$riskCat <- with(results2, ifelse(p50th>0.5&lginvar<6.814,1,ifelse(p50th>0.5&lginvar>=6.8140,2,ifelse(p50th<0.5&lginvar<6.814,3,4))))
+results2$riskCat <- with(results2, ifelse(p50th>0.25&lginvar<7.3046,1,ifelse(p50th>0.25&lginvar>=7.3046,2,ifelse(p50th<0.25&lginvar<7.3046,4,3))))
 #creating subsets
 highRisk <- subset(results2, riskCat==1)
 highestRisk <- subset(highRisk, p50th>0.9)
+results2$highestRisk <- with(results2, ifelse(p50th>0.9&lginvar<7.3046,"yes","no"))
+```
 
-#Plots
+#Plots with 4 risk quandrangles
+```{r}
 p<-ggplot(results2, aes(x=lginvar, y=p50th)) +
-  annotate("rect", xmin = 3, xmax = 6.814, ymin = 0.9, ymax = 1, fill= "red")+
+  annotate("rect", xmin = 3, xmax = 7.3046, ymin = 0.9, ymax = 1, fill= "#bd0026")+
+  annotate("rect", xmin = 3, xmax = 7.3046, ymin = 0.25, ymax = 0.9, fill= "#f03b20")+
+  annotate("rect", xmin = 7.3046, xmax = 14.5, ymin = 0.25, ymax = 1, fill= "#fd8d3c")+
+  annotate("rect", xmin = 3, xmax = 7.3046, ymin = 0, ymax = 0.25, fill= "#ffffb2")+
+  annotate("rect", xmin = 7.3046, xmax = 14.5, ymin = 0, ymax = 0.25, fill= "#fecc5c")+
+  xlim(3,14.5)+
+  ylim(0,1)+
   geom_point() +
-  theme_minimal() +
-  geom_vline(xintercept = 6.814) + geom_hline(yintercept = 0.5)+
-    labs(x="log(inverse variance)", y="median of posterior probability of introduction")
+  theme_classic() +
+  geom_vline(xintercept = 7.3046) + geom_hline(yintercept = 0.25)+
+    labs(x="log(inverse variance)", y="median posterior probability of introduction")+
+  annotate(geom="text", x=3.5, y=0.95, label="A", color="black", fontface ="bold", size =5)+
+  annotate(geom="text", x=3.5, y=0.85, label="B", color="black",fontface ="bold", size =5)+
+  annotate(geom="text", x=3.5, y=0.2, label="E", color="black",fontface ="bold", size =5)+
+  annotate(geom="text", x=14, y=0.95, label="C", color="black",fontface ="bold", size =5)+
+  annotate(geom="text", x=14, y=0.2, label="D", color="black",fontface ="bold", size =5)
 p
-
 
 hR<-ggplot(highRisk, aes(x=lginvar, y=p50th)) +
   geom_point() +
@@ -174,49 +192,39 @@ hR<-ggplot(highRisk, aes(x=lginvar, y=p50th)) +
   theme_minimal()
 hR
 
-
 plot <-ggplot(highestRisk,aes(x=lginvar, y=p50th, color = ElodeaDest) ) +
   #coord_polar(theta = "x") +
   geom_point() +
   theme_classic() +
   geom_text_repel(aes(label=DestName2))+
-  labs(x="log(inverse variance)", y="median of posterior probability of introduction")+
+  labs(x="log(inverse variance)", y="median posterior probability of introduction")+
  guides(fill=FALSE, color=FALSE)
 plot
-  
 
-
-
+proportions <- results2%>%
+  group_by(riskCat)%>%
+  count()
 ```
-
-
-
-
-
-
-
-
 
 Dropping pilot ratio model results from results, writing to csv file
 ```{r}
-results2 <- results%>%
-  select(-X25th, -median, -X75th, -medianrank)
-results2$inv_variance = 1/results2$variance
-
 #adding raw data
 rawFlights <- read.csv("STAN/floatplanedata4.csv", stringsAsFactors = F)
 #make sure keys are both integer, then joining
 results2$LakeID <- as.integer(results2$LakeID)
-rawFlights$ID <- as.integer(rawFlights$ID)
 results3 <- results2%>%
-  left_join(rawFlights,by=c('LakeID'='ID'))
-#drop columns
-results3 <- select(results3,-name,-lakeID)
+  left_join(rawFlights,by='LakeID')
+
+
 #adding names for HUC8 units
 huc <- read.csv("Data/huc_codes.csv")
 results3$HUC8 <- as.integer(results3$HUC8)
 results3 <- results3%>%
   left_join(huc,by=c('HUC8'='code'))
+
+#drop columns
+results3 <- select(results3,-DestName2,-modelID.x, -ElodeaDest, -SusFPintro, -inv_variance, -lginvar, -modelID.y, -pilots, -epilots, -flights, -eflights, -weflights, -name, -wflights)
+
 write.csv(results3, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/STANresults.csv",row.names = FALSE)
 ```
 
