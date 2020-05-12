@@ -1,7 +1,7 @@
 // Following Carpenter et al. 2016 p. 16
 data {
   int<lower=0> J; // number of lakes
-  int<lower=0> y[J]; // number of flights from elodea-infested sources into lake j
+  int<lower=0> y[J]; // number of flights from elodea-invaded sources into lake j
   int<lower=0> n[J]; // number of total flights into lake j (number of trials)
 }
 parameters {
@@ -17,7 +17,7 @@ transformed parameters {
 }
 model {
   lambda ~ uniform(0,1); // hyperprior
-  kappa ~ uniform(0.1,5); // hyperprior was ~pareto(0.1,1.5)uniform(0,1) in Carpenter et al.
+  kappa ~ uniform(0.1,5); // hyperprior was uniform(0.1,5) for results as of 04/30/20 creating datafit1, pareto(0.1,1.5)uniform(0,1) in Carpenter et al.
   theta ~ beta(alpha,beta); // prior for the probability p that lake j is invaded
   y ~ binomial(n,theta); // likelihood for flights
   

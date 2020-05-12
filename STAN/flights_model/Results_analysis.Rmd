@@ -27,8 +27,8 @@ Creating a reference table with destination-specific information
 ```{r}
 #importing reference table for destination information and association to theta[id]
 ref <- read.csv("Data/Destinations091916_4.csv", stringsAsFactors = FALSE)
-
-#adding Sucker Lake as a new ElodeaDest = 1
+lakes <- read.dbf("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/Elodea_Fetch_Elevation/Elodea_Fetch_Elev.dbf")
+l#adding Sucker Lake as a new ElodeaDest = 1
 ref$ElodeaDest <- with(ref,ifelse(UniqueID=="Lk_312858",1,ElodeaDest))
 
 #adding a variable about suspected Floatplane introductions, SusFPintro
