@@ -1,0 +1,10 @@
+R_code_flights2pareto.Rmd
+R_code_flights3.Rmd
+StanCode.stan
+flights_model2.rds
+flights_model2.stan
+flights_model3.rds
+flights_model3.stan
+flights_model4.rds
+flights_model_woGenQuant.rds
+flights_model_woGenQuant.stan
