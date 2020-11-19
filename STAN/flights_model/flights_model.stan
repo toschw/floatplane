@@ -17,12 +17,13 @@ transformed parameters {
 }
 model {
   lambda ~ uniform(0,1); // hyperprior
-  kappa ~ uniform(0.1,5); // hyperprior was uniform(0.1,5) for results as of 04/30/20 creating datafit1, pareto(0.1,1.5)uniform(0,1) in Carpenter et al.
+  kappa ~ pareto(0.1,1.5); // hyperprior was uniform(0.1,5) for results as of 04/30/20 creating datafit1, pareto(0.1,1.5) creating datafit2, uniform(0,1) in Carpenter et al.
   theta ~ beta(alpha,beta); // prior for the probability p that lake j is invaded
   y ~ binomial(n,theta); // likelihood for flights
-  
+  //Both alpha and beta are transformed parameters and since they are on the right side of the samplinga smapling statement don't require a Jacobian adjustment (Carpenter et al.2016) 
 }
 generated quantities {
+  //real<lower=0,upper=1> theta[J] = beta_rng(y + alpha, n - y + beta);
   real<lower=0,upper=1> avg; // avg success
   int<lower=0,upper=1> above_avg[J]; // true if theta[j] > mean(theta), meaning the posterior prob. that a given destination is above-average in terms of the elodea introduction rate
   int<lower=1,upper=J> rnk[J]; // rank of j

@@ -75,7 +75,7 @@ Figure2.6
 # Check 2
 Accessing the posterior simulations and checking sampling difficulties, as in Gelman text p.593-4
 ```{r}
-data_sims <- extract(datafit1, permuted=TRUE)
+data_sims <- extract(datafit2, permuted=TRUE)
 p1 <- hist(data_sims$lambda)
 p2 <- hist(data_sims$kappa)
 p3 <- hist(data_sims$theta)

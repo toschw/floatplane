@@ -18,7 +18,7 @@ library(rstan)
 rstan_options(auto_write = TRUE)
 Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
 options(mc.cores = parallel::detectCores())
-datafitX <- stan(file="STAN/flights_model/flights_model.stan",data=c("J","y","n"), iter = 10000, chains = 4,control=list(adapt_delta=0.8, max_treedepth =10))
+datafitX <- stan(file="STAN/flights_model/flights_model.stan",data=c("J","y","n"), iter = 10000, chains = 4,control=list(adapt_delta=0.8, max_treedepth =10), verbose=TRUE)
 
 ##STEP3# Save posterior summary statistics as csv file, (remove # in each of the following lines if you want to do this this)
   fit_summary <- summary(datafit1)
