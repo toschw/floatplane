@@ -42,14 +42,37 @@ AB <- n
 Player <- data$LakeID
 player_avgs <- y / n
 tot_avg <- sum(y) / sum(AB)
-
+batting_avg <- function(x) print(format(round(x, digits = 3), nsmall = 3), quote = FALSE)
+summary_stats <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
+}
 options(mc.cores = parallel::detectCores())
 SEED <- 101
 wi_prior <- normal(-1, 1)  # weakly informative prior on log-odds
 fit_partialpool <- 
   stan_glmer(cbind(Hits, AB - Hits) ~ (1 | Player), data = data, family = binomial("logit"),
-             prior_intercept = wi_prior, seed = SEED)
+             prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000)
 ```
+
+```{r}
+library(rstanarm)
+Lake <- data$LakeID
+lake_avgs <- y / n
+tot_avg <- sum(y) / sum(n)
+intro_avg <- function(x) print(format(round(x, digits = 3), nsmall = 3), quote = FALSE)
+summary_stats <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
+}
+options(mc.cores = parallel::detectCores())
+SEED <- 101
+wi_prior <- normal(-1, 1)  # weakly informative prior on log-odds
+fit_partialpool <- 
+  stan_glmer(cbind(y, n - y) ~ (1 | Lake), data = data, family = binomial("logit"),
+             prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000)
+```
+
 
 ```{r}
 # shift each player's estimate by intercept (and then drop intercept)
@@ -59,8 +82,8 @@ shift_draws <- function(draws) {
 alphas <- shift_draws(as.matrix(fit_partialpool))
 partialpool <- summary_stats(alphas)
 partialpool <- partialpool[-nrow(partialpool),]
-rownames(partialpool) <- as.character(bball$Player)
-batting_avg(partialpool)
+rownames(partialpool) <- as.character(data$LakeID)
+intro_avg(partialpool)
 ```
 
 ```{r}
@@ -69,7 +92,7 @@ models <- c("partial pooling")
 estimates <- rbind(partialpool)
 colnames(estimates) <- c("lb", "median", "ub")
 plotdata <- data.frame(estimates, 
-                       observed = rep(player_avgs, times = length(models)), 
+                       observed = rep(lake_avgs, times = length(models)), 
                        model = rep(models, each = J), 
                        row.names = NULL)
 
@@ -81,7 +104,7 @@ ggplot(plotdata, aes(x = observed, y = median, ymin = lb, ymax = ub)) +
   facet_grid(. ~ model) +
   coord_fixed() +
   scale_x_continuous(breaks = c(0.2, 0.3, 0.4)) +
-  labs(x = "Observed Hits / AB", y = "Predicted chance of hit") +
+  labs(x = "Observed y / n", y = "Predicted chance of AIS introduction") +
   ggtitle("Posterior Medians and 80% Intervals")
 
 ```
