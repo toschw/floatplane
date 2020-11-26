@@ -1,0 +1,450 @@
+---
+title: "AIS seaplane transmission risk "
+author: "Tobias Schwoerer"
+date: "November 20 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+#Hierarchical model using rstanarm for estimating destination specific probability distribution of introducing AIS to lake j  
+With help from Eric Ward, NOAA
+## Useful references: Gelman et al. 2013. Bayesian Data Analysis 3rd ed. , Carpenter et al. 2016. Stan: A probabilistic programming language. Journal of Statistical Software
+
+#1 Set up
+load packages, read in and prepare data for analysis 
+```{r}
+library(shinystan)
+library(bayesplot)
+library(ggplot2)
+library(cowplot)
+library(rstan)
+library(dplyr)
+library(tidyr)
+library(foreign)
+library(data.table)
+library(tidyverse)
+library(loo)
+#setting theme for plotting
+theme_set(theme_classic(base_size = 9))
+#importing data archived at https://doi.org/10.18739/A25H7BV1C 
+#data <- read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaac2cc93-04f3-4e5c-b36b-01120993f1d8",      method="libcurl"))
+#ref  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3A8ed27563-55f2-4273-a272-09406d85419b",method="libcurl")) 
+lakeList <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv")
+flights <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv")
+```
+
+#Data preparation
+```{r}
+#eliminate flights from runways (amphibious planes)
+runway <- lakeList%>%
+  filter(Type==3)
+v <-runway$LakeID
+#drop rows associated with runway start location
+flights <- flights[!(flights$StartID %in% v), ]
+#create ElodeaO and ElodeaD indicating whether origin or destination is known elodea source
+starts <- filter(lakeList, lakeList$SeaplaneBase != "")
+starts <- starts[,c("Elodea","SeaplaneBase")]
+flights <- flights%>%
+  left_join(starts,by=c("StartID"="SeaplaneBase"))
+names(flights)[names(flights)=="Elodea"] <- "ElodeaO"
+dest <- lakeList[,c("Elodea","LakeID")]
+flights <- flights%>%
+  inner_join(dest,by=c("DestID"="LakeID"))
+names(flights)[names(flights)=="Elodea"] <- "ElodeaD"
+
+flights$Oeflights <- with(flights,ifelse(ElodeaO==0&ElodeaD==1|ElodeaO==1&ElodeaD==1,AnnualFl_1,0))
+flights$Deflights <- with(flights,ifelse(ElodeaO==1&ElodeaD==0|ElodeaO==1&ElodeaD==1,AnnualFl_1,0))
+
+#summarizing origin 
+origin <- flights%>%
+  group_by(StartID)%>%
+  summarise(eflights=sum(Oeflights),
+            flights=sum(AnnualFl_1))
+ids <- lakeList[,c("SeaplaneBase","LakeID")]
+origin <- origin%>%  
+  left_join(ids, by=c("StartID"="SeaplaneBase"))
+origin$StartID <- NULL
+
+#summarizing destinations
+destinations <- flights%>%
+    group_by(DestID)%>%
+    summarise(eflights=sum(Deflights),
+            flights=sum(AnnualFl_1))
+names(destinations)[names(destinations)=="DestID"] <- "LakeID"
+
+#combining
+data <- bind_rows(origin,destinations)%>%
+  group_by(LakeID)%>%
+    summarise(eflights=sum(eflights),
+            flights=sum(flights))
+
+
+J <- nrow(data)
+n <- data$flights
+y <- data$eflights
+```
+
+
+
+#2 Partial pooling Model
+Following: https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#observed-vs.estimated-chance-of-success
+```{r}
+library(rstanarm)
+Lake <- data$LakeID
+lake_avgs <- y / n
+tot_avg <- sum(y) / sum(n)
+intro_avg <- function(x) print(format(round(x, digits = 3), nsmall = 3), quote = FALSE)
+summary_stats <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
+}
+options(mc.cores = parallel::detectCores())
+SEED <- 101
+wi_prior <- normal(-1, 1)  # weakly informative prior on log-odds
+
+fit_partialpool <- 
+  stan_glmer(cbind(y, n - y) ~ (1 | Lake), data = data, family = binomial("logit"),
+             prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000) #The left-hand side of the formula specifies the binomial outcome by providing the number of successes (hits) and failures (flights from non-sources) for each lake, and the right-hand side indicates that we want an intercept-only model.
+```
+
+#3 Plotting results table
+TASK turn this into a dataframe and combine with other ref info, keep model evaluation parameters Rhat etc.
+```{r}
+# shift each Lake's estimate by intercept (and then drop intercept)
+shift_draws <- function(draws) {
+  sweep(draws[, -1], MARGIN = 1, STATS = draws[, 1], FUN = "+")
+}
+alphas <- shift_draws(as.matrix(fit_partialpool))
+partialpool <- summary_stats(alphas)
+partialpool <- partialpool[-nrow(partialpool),]
+rownames(partialpool) <- as.character(data$LakeID)
+intro_avg(partialpool)
+
+#create dataframe and moving rownames into columns
+partialpoolDF <- as.data.frame(partialpool)
+partialpoolDF <- rownames_to_column(partialpoolDF, var="LakeID")
+
+#save summary of fitted model as data.frame
+summary(fit_partialpool)
+diag_partial <-as.data.frame(summary(fit_partialpool))
+#moving rownames into column
+diag_partial <- rownames_to_column(diag_partial, var="LakeID")
+#extracting intercept, sigma, mean PPD, log-posterior to save for later
+drop_rows <- diag_partial[(diag_partial$LakeID %in% c("(Intercept)","Sigma[Player:(Intercept),(Intercept)]","mean_PPD","log-posterior")), ] 
+#dropping the above
+diag_partial <- diag_partial[ !(diag_partial$LakeID %in% c("(Intercept)","Sigma[Player:(Intercept),(Intercept)]","mean_PPD","log-posterior")), ] #cleaning up LakeID by first extracting string that starts with Lk and ends with ]
+diag_partial$LakeID <- str_extract_all(diag_partial$LakeID, "LK.+]")
+diag_partial$LakeID <- substr(diag_partial$LakeID, 1, nchar(diag_partial$LakeID)-1)
+#drop columns showing log-odds
+diag_partial <- diag_partial %>%
+  select(LakeID, mcse, n_eff, Rhat)
+
+#joining dataframe to create results table incl. diagnostics, except sigma, mean PPD, log-posterior
+partialpoolResults <- diag_partial%>%
+  left_join(partialpoolDF, by="LakeID")
+```
+
+
+#Complete pooling model
+```{r}
+fit_pool <- 
+  stan_glm(cbind(y, n - y) ~ 1, data = data, family = binomial("logit"),
+             prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=2000)
+
+invlogit <- plogis  # function(x) 1/(1 + exp(-x))
+summary_stats <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
+}
+
+pool <- summary_stats(as.matrix(fit_pool))  # as.matrix extracts the posterior draws
+pool <- matrix(pool,  # replicate to give each player the same estimates
+               nrow(data), ncol(pool), byrow = TRUE, 
+               dimnames = list(data$LakeID, c("10%", "50%", "90%")))
+intro_avg(pool)
+```
+
+#no pooling model
+```{r}
+fit_nopool <- update(fit_pool, formula = . ~ 0 + Lake, prior = wi_prior)
+nopool <- summary_stats(as.matrix(fit_nopool))
+rownames(nopool) <- as.character(data$LakeID)
+intro_avg(nopool)
+
+```
+
+#Plotting predicted against the data, Posterior Medians and 80% Intervals
+```{r}
+library(ggplot2)
+models <- c("complete pooling","no pooling","partial pooling")
+estimates <- rbind(pool, nopool, partialpool)
+colnames(estimates) <- c("lb", "median", "ub")
+plotdata <- data.frame(estimates, 
+                       observed = rep(lake_avgs, times = length(models)), 
+                       model = rep(models, each = J), 
+                       row.names = NULL)
+
+ggplot(plotdata, aes(x = observed, y = median, ymin = lb, ymax = ub)) +
+  geom_hline(yintercept = tot_avg, color = "lightpink", size = 0.75) +
+  geom_abline(intercept = 0, slope = 1, color = "skyblue") + 
+  geom_linerange(color = "gray60", size = 0.75) + 
+  geom_point(size = 2.5, shape = 21, fill = "gray30", color = "white", stroke = 0.2) + 
+  facet_grid(. ~ model) +
+  coord_fixed() +
+  scale_x_continuous(breaks = c(0.25,0.50,0.75,1.0)) +
+  labs(x = "Observed y / n", y = "Predicted chance of AIS introduction") 
+
+ggsave("STAN/flights_model/figures/post_med_compare.bmp", plot = last_plot(), device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+#Cross-validation for model checking and comparison
+approximating the expected log predictive density (the lower the better) in the third column of the output. Specifically, it is the leave-one-out (loo) approximation to the log predictive density. Even though this approximation is only asymptotically valid, as it likely underestimates the expected log predictive density, the relative ranking of the models is the same as if it would be correctly calculated. https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#partial-pooling
+```{r}
+compare_models(loo(fit_partialpool), loo(fit_pool), loo(fit_nopool))
+loo_compare(loo(fit_partialpool), loo(fit_pool), loo(fit_nopool))
+```
+               elpd_diff se_diff 
+fit_partialpool      0.0       0.0
+fit_nopool       -1382.5      40.9
+fit_pool        -11271.8    1835.2
+
+
+
+
+
+#Predicting new observations
+
+
+
+#3 Model output
+```{r}  
+#Save posterior summary statistics (contains sampling diagnostics)
+fit_summary <- summary(datafit)
+fit_summary.df <- as.data.frame(fit_summary$summary)
+fitS <- setDT(fit_summary.df, keep.rownames = "X")
+fitS <- fitS[1:727,]
+results <- fitS%>%
+  left_join(ref, by=c("X"="ï..modelID"))
+
+#Sort by median predicted introduction rate and inverse variance
+results <- results[order(-results$X50.,results$sd),]
+results <- results%>% 
+  mutate(rank = row_number())
+
+#Move columns for easier reading starting with Rank, UniqueID, 
+results <-results[c("rank","UniqueID","DestName","Name","RegionName","DestType","Lat", "Long","HUC8","GMU","mean","se_mean","sd","X2.5.","X25.","X50.","X75.","X97.5.","n_eff","Rhat","WithinNPS","WithinRefu","Suitab","Fetch_m","ElevMEAN","flights","eflights","X")]
+write.csv(results, file="/STANresults.csv",row.names = FALSE)
+```
+
+
+#4 Model diagnostic and validation
+##4.1 Posterior predictive check
+plotting observed introduction rates versus posterior medians with 95% posterior intervals
+```{r}
+library(plyr)
+library(dplyr)
+library(ggplot2)
+sdata <- read.csv("STAN/flights_model/fit_summary3.csv")
+data <-  read.csv("STAN/floatplanedata4.csv")
+data$rate <- data$eflights/data$flights
+
+theme_set(theme_classic(base_size = 7))
+
+##renaming columns of above data frame
+names(sdata)[5:9] <- c("perc3","perc25","perc50","perc75","perc97")
+#selecting first 729 rows for the draws
+sdata2 <- sdata[1:727,]
+sdata2 <- cbind(sdata2,data)
+
+ScatterFig <-  ggplot(sdata2, aes(x=sdata2$rate,y=sdata2$perc50)) +
+  geom_pointrange(aes(ymin=sdata2$perc3, ymax=sdata2$perc97)) + 
+  xlab("observed introduction rate")+ ylab("95% posterior interval for theta(j)") +
+  ylim(0,1)+ xlim(0,1) + geom_jitter(height=0,width=0.1)+ geom_abline(intercept = 0, slope = 1,colour='red')+
+  theme(axis.title.x = element_text(face="bold", colour="#000000", size=7),
+        axis.text.x  = element_text(face="bold", angle=0, vjust=0.5, size=7)) +
+  theme(axis.title.y = element_text(face="bold", colour="#000000", size=7),
+        axis.text.y  = element_text(face="bold", angle=360, vjust=0.5, size=7))+
+  theme(panel.background = element_rect(fill = 'white', colour="black"))
+ScatterFig
+ggsave("STAN/flights_model/figures/datafit3Figures/ScatterFig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+##4.2 Model checking
+external validation
+```{r}
+data_sims <- extract(datafit3, permuted=TRUE)
+theta_rep <- array(NA,c(n_sims,J))
+y_rep <- array(NA,c(n_sims,J))
+for (s in 1:n_sims){
+  theta_rep[s,] <- rbeta(J,data_sims$alpha[s],data_sims$beta[s])
+  y_rep[s,] <- rbinom(J,n_sims,theta_rep[s,])
+}
+
+ #displaying replicated data
+par(mfrow=c(5,4),mar=c(4,4,2,2))
+hist(y/n,xlab="",main="observed")
+for (s in 1:19)
+  hist(theta_rep[s,], xlab="",main=paste("theta_rep",s))
+ #Saved figure manually for Supplementary File
+
+ #calculating mean and SD for replicated new data
+theta_rep_mean <- mean(theta_rep)
+theta_rep_mean
+theta_rep_sd <- sd(theta_rep)
+theta_rep_sd
+
+ratios_cp <- neff_ratio(datafit3)
+mcmc_neff(ratios_cp, size = 2)
+```
+Results:
+theta_rep_mean = 0.236
+theta_rep_sd = 0.361
+
+Also, the ratios are very low, below 0.1 which may hint torwards the need to reparameterize. See: https://cran.r-project.org/web/packages/bayesplot/vignettes/visual-mcmc-diagnostics.html#rhat-potential-scale-reduction-statistic
+
+##4.3 Convergence check
+Rhat, traceplot, energy plot, pairs plot 
+```{r}
+#number of lakes with Rhat<=1.05 Rhat<=1.1 and Rhat>1.1
+df <- fit_summary.df[1:727,]#subsetting to just include the thetas for 727 lakes
+df <- cbind(df,ref)
+nrow(subset(df,Rhat<=1.05))
+nrow(subset(df,Rhat<=1.1))
+nrow(subset(df,Rhat>1.1))
+
+
+#traceplots
+traceplot <- stan_trace(datafit3, pars = c("theta[322]","theta[324]","theta[518]","avg"), inc_warmup = TRUE, nrow = 9)
+levels(traceplot$data$parameter)[1] <- "Martin Lake"
+levels(traceplot$data$parameter)[2] <- "McKinley Lake"
+levels(traceplot$data$parameter)[3] <- "Alexander Lake"
+levels(traceplot$data$parameter)[4] <- "Average"
+traceplot <- traceplot + xlab("iteration") + ylab("posterior for theta(j)")
+traceplot
+
+ggsave("STAN/flights_model/figures/datafit3Figures/traceplot.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 140, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#energy plot
+posterior_cp <- as.array(datafit3)
+np_cp <- nuts_params(datafit3)
+color_scheme_set("blue")
+mcmc_nuts_energy(np_cp)
+ggsave("STAN/flights_model/figures/datafit3Figures/energyplot.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 140, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#pairsplot (note, using just one theta to keep the plot readable)
+theme_set(theme_classic(base_size = 7))
+color_scheme_set("darkgray")
+
+#mcmc_parcoord(posterior_cp, np = np_cp) #generates error: cannot allocate vector of size 889.3 Mb 
+pairs_plot <- mcmc_pairs(posterior_cp, np = np_cp, pars = c("alpha","beta","lambda","kappa","theta[1]"), 
+           off_diag_args = list(size = 0.75))
+
+plots <- pairs_plot$bayesplots # list of 25 ggplot objects (diagonal plots are in slots 1,7,13,19,25)
+
+#Note, to save the grid of the plots, set plots=bayesplot_grid(plots = plots)
+ggsave("STAN/flights_model/figures/datafit3Figures/pairs_plot.jpeg", plot = bayesplot_grid(plots = plots), device = "jpeg", path = NULL,
+  scale = 1, width = 140, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#pairsplot for Aki Vehtari with help from Jonah Gabry
+posterior_cp <- posterior_cp%>%
+  mutate(poserior_cp, lambda2 = qlogis)
+
+
+
+pairs_plot2 <-
+  mcmc_pairs(
+    posterior_cp,
+    np = np_cp,
+    pars = c("alpha", "beta", "lambda", "kappa", "theta[1]"),
+    transformations = list(
+      "lambda" = "qlogis",  # or define a function called logit
+      "kappa" = function(x) log(x - 0.1),
+      "theta[1]" = "qlogis"
+    ),
+    off_diag_args = list(size = 0.75)
+  )
+
+plots2 <- pairs_plot2$bayesplots # list of 25 ggplot objects (diagonal plots are in slots 1,7,13,19,25)
+plots2
+#Note, to save the grid of the plots, set plots=bayesplot_grid(plots = plots)
+ggsave("STAN/flights_model/figures/datafit3Figures/pairs_plot3.jpeg", plot = bayesplot_grid(plots = plots2), device = "jpeg", path = NULL,
+  scale = 1, width = 140, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+```
+Result: consistent with model output, no divergences found. 
+
+#5 Visualizing results
+posteriors for known elodea-invaded lakes
+```{r}
+theme_set(theme_classic(base_size = 7))  #NOT WORKING HERE --> FIX!
+library(ggplot2)
+library(rstan)
+FigPosteriors <- plot(datafit3, show_density = TRUE, pars=c("theta[321]","theta[322]","theta[324]","theta[376]","theta[518]","theta[300]","theta[309]","theta[376]","theta[347]","avg"), ci_level = 0.5, fill_color = "#99d8c9")
+chvector <- character(length=9)
+chvector <- c("Average", "Lake Hood","Daniels Lake","Stormy Lake","Alexander Lake","Sucker Lake","McKinley Lake","Martin Lake","Bering Lake")
+FigPosteriors <- FigPosteriors + scale_y_continuous(labels=chvector[1:9],breaks=1:9) + labs(x="95% posterior for theta(j)")
+FigPosteriors
+
+ggsave("STAN/flights_model/figures/datafit3Figures/FigPosteriors.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 140, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#Better publication version of the above, code not working correctly yet
+posterior <- as.array(datafit3)
+fig <- mcmc_areas(
+  posterior, 
+  pars = c("theta[321]","theta[322]","theta[324]","theta[376]","theta[518]","theta[300]","theta[309]","theta[376]","avg"),
+  prob = 0.5, # 50% intervals
+  prob_outer = 0.95, # 95%
+  point_est = "median"
+)
+
+fig <- fig + scale_y_discrete(labels=chvector[1:9],breaks=1:9) + labs(x="95% posterior for theta(j)")
+fig
+```
+
+
+Creating results table for seaplane bases
+```{r}
+FAAbases <- read.csv("Data/FAAbases.csv", stringsAsFactors = FALSE)
+bases <- FAAbases[,2]
+basesResults <- subset(results, UniqueID %in% bases)
+```
+
+
+Looking for divergences
+```{r}
+partition <- util$partition_div(datafit3)
+div_samples <- partition[[1]]
+nondiv_samples <- partition[[2]]
+
+par(mfrow=c(1, 3))
+
+plot(nondiv_samples$a, nondiv_samples$b,
+     col=c_dark_trans, pch=16, cex=0.8,
+     xlab="a", ylab="b")
+points(div_samples$a, div_samples$b,
+       col="green", pch=16, cex=0.8)
+
+plot(nondiv_samples$a, log(nondiv_samples$sigma),
+     col=c_dark_trans, pch=16, cex=0.8,
+     xlab="a", ylab="log(sigma)")
+points(div_samples$a, log(div_samples$sigma),
+       col="green", pch=16, cex=0.8)
+
+plot(nondiv_samples$b, log(nondiv_samples$sigma),
+     col=c_dark_trans, pch=16, cex=0.8,
+     xlab="b", ylab="log(sigma)")
+points(div_samples$b, log(div_samples$sigma),
+       col="green", pch=16, cex=0.8)
+```
