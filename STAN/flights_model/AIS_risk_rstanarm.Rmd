@@ -105,10 +105,14 @@ wi_prior <- normal(-1, 1)  # weakly informative prior on log-odds
 fit_partialpool <- 
   stan_glmer(cbind(y, n - y) ~ (1 | Lake), data = data, family = binomial("logit"),
              prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000) #The left-hand side of the formula specifies the binomial outcome by providing the number of successes (hits) and failures (flights from non-sources) for each lake, and the right-hand side indicates that we want an intercept-only model.
+
+
+
 ```
 
 #3 Plotting results table
 TASK turn this into a dataframe and combine with other ref info, keep model evaluation parameters Rhat etc.
+TASK 2: color know elodea locations
 ```{r}
 # shift each Lake's estimate by intercept (and then drop intercept)
 shift_draws <- function(draws) {
