@@ -24,47 +24,28 @@ library(foreign)
 library(data.table)
 library(tidyverse)
 library(loo)
-#setting theme for plotting
+
 theme_set(theme_classic(base_size = 9))
 #importing data archived at https://doi.org/10.18739/A25H7BV1C 
 #data <- read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaac2cc93-04f3-4e5c-b36b-01120993f1d8",      method="libcurl"))
 #ref  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3A8ed27563-55f2-4273-a272-09406d85419b",method="libcurl")) 
-#lakeList <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv")
-#flights <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv")
-lakeList <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv",stringsAsFactor=F)
-flights <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv",stringsAsFactor=F)
+lakeList <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv")
+flights <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv")
+#lakeList <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv",stringsAsFactor=F)
+#flights <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv",stringsAsFactor=F)
 ```
 
 #setting a common lakeID for all lakes
 ```{r}
-s_list <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
-s_list <- s_list %>%
-  select(StartID, GNIS_NAME, UniqueID)
+#eliminating non-freshwater take off indicated by Type==3 in LakeList
+s_list <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
 lakeList2 <- lakeList%>%
+  filter(Type!=3)%>%
   left_join(s_list, by=c("SeaplaneBase"="StartID"))
-lakeList2 <- lakeList2 %>%
-  select(LakeID, LakeName,SeaplaneBase,GNIS_NAME,UniqueID,lat,long)
-lakeList2$error <- with(lakeList2,ifelse(LakeID!=UniqueID,1,0))
-
-#creating list of errors, also taking out runways
-errorlist <- lakeList2%>%
-  filter(error==1 & comment!="runway")
-errorlist$subset <- substr(errorlist$LakeID, 1, 1)
-#list where we didn't have Lk_# and only St_#
-errorlistS <- errorlist%>%
-  filter(subset=="S" & UniqueID== "")
-#one lake without making lake names
-Stlk_53 <- errorlist%>%
-  filter(LakeID=="Stlk_53")
-#list where we had Lk_# 
-errorlistL <- errorlist%>%
-  filter(subset=="L")
-
-#combining above
-errors <- rbind(errorlistL, errorlistS,Stlk_53)
-
-write.csv(errors, file="C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/errors.csv")
-
+#recoding Stlk_# with Lk_#
+lakeList2$LakeID  <- with(lakeList2, ifelse( str_detect(LakeID,"Stlk_"), UniqueID,LakeID))
+lakeList2 <- lakeList2[,1:8] 
+write.csv(lakeList2, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/lakeList2.csv")
 ```
 
 #Data preparation
@@ -75,6 +56,7 @@ runway <- lakeList%>%
 v <-runway$LakeID
 #drop rows associated with runway start location
 flights <- flights[!(flights$StartID %in% v), ]
+
 #create ElodeaO and ElodeaD indicating whether origin or destination is known elodea source
 starts <- filter(lakeList, lakeList$SeaplaneBase != "")
 starts <- starts[,c("Elodea","SeaplaneBase")]
@@ -94,10 +76,12 @@ origin <- flights%>%
   group_by(StartID)%>%
   summarise(eflights=sum(Oeflights),
             flights=sum(AnnualFl_1))
-ids <- lakeList[,c("SeaplaneBase","LakeID")]
+ids <- lakeList2[,c("SeaplaneBase","LakeID")]
 origin <- origin%>%  
   left_join(ids, by=c("StartID"="SeaplaneBase"))
-origin$StartID <- NULL
+#drop StartID column
+origin <- origin%>%
+  select(-StartID)
 
 #summarizing destinations
 destinations <- flights%>%
@@ -111,7 +95,6 @@ data <- bind_rows(origin,destinations)%>%
   group_by(LakeID)%>%
     summarise(eflights=sum(eflights),
             flights=sum(flights))
-
 
 J <- nrow(data)
 n <- data$flights
