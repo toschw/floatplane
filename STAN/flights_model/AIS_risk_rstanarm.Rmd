@@ -101,6 +101,20 @@ n <- data$flights
 y <- data$eflights
 ```
 
+Testing for heterogeneity of proportions
+```{r}
+library(rstatix)
+# Homogeneity of proportions between groups
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# H0: the proportion of eflights is similar for each lake
+xtab <- as.table(rbind(y, n-y))
+
+# Compare the proportions of eflights between lakes
+propTest <- prop_test(xtab, detailed=TRUE)
+
+# Pairwise comparison between lakes
+pwPropTest <- pairwise_prop_test(xtab, p.adjust.method = "hochberg")
+```
 
 
 #2 Partial pooling Model
@@ -117,14 +131,11 @@ summary_stats <- function(posterior) {
 }
 options(mc.cores = parallel::detectCores())
 SEED <- 101
-wi_prior <- normal(-1, 1)  # weakly informative prior on log-odds
+wi_prior <- normal(0, 1.4)  # this flat prior from King et al. (2009), also used weakly informative prior on log-odds normal(-1, 1), which is slightly informative on smaller values but compared to this flat prior was not as good in the model comparison below, see hist(plogis(rnorm(1000,-1,1)),100)
 
 fit_partialpool <- 
-  stan_glmer(cbind(y, n - y) ~ (1 | Lake), data = data, family = binomial("logit"),
+  stan_glmer(cbind(y, n - y) ~ (1 | Lake), data = data,  family = binomial("logit"),
              prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000) #The left-hand side of the formula specifies the binomial outcome by providing the number of successes (hits) and failures (flights from non-sources) for each lake, and the right-hand side indicates that we want an intercept-only model.
-
-
-
 ```
 
 #3 Plotting results table
@@ -197,8 +208,8 @@ intro_avg(nopool)
 #Plotting predicted against the data, Posterior Medians and 80% Intervals
 ```{r}
 library(ggplot2)
-models <- c("complete pooling","no pooling","partial pooling")
-estimates <- rbind(pool, nopool, partialpool)
+models <- c("no pooling","partial pooling")  #"complete pooling"
+estimates <- rbind(nopool,partialpool)  #pool, nopool, 
 colnames(estimates) <- c("lb", "median", "ub")
 plotdata <- data.frame(estimates, 
                        observed = rep(lake_avgs, times = length(models)), 
@@ -223,7 +234,9 @@ ggsave("STAN/flights_model/figures/post_med_compare.bmp", plot = last_plot(), de
 #Cross-validation for model checking and comparison
 approximating the expected log predictive density (the lower the better) in the third column of the output. Specifically, it is the leave-one-out (loo) approximation to the log predictive density. Even though this approximation is only asymptotically valid, as it likely underestimates the expected log predictive density, the relative ranking of the models is the same as if it would be correctly calculated. https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#partial-pooling
 ```{r}
-compare_models(loo(fit_partialpool), loo(fit_pool), loo(fit_nopool))
+
+loo_compare(loo(fit_partialpool), loo(fit_partialpool_wi))
+
 loo_compare(loo(fit_partialpool), loo(fit_pool), loo(fit_nopool))
 ```
                elpd_diff se_diff 
@@ -231,7 +244,10 @@ fit_partialpool      0.0       0.0
 fit_nopool       -1382.5      40.9
 fit_pool        -11271.8    1835.2
 
-
+The partial pool model with the flat non-informative prior outperforms the model with the weakly informative prior. 
+                   elpd_diff se_diff
+fit_partialpool     0.0       0.0   
+fit_partialpool_wi -7.7       2.6
 
 
 
