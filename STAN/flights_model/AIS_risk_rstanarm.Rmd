@@ -10,6 +10,14 @@ editor_options:
 With help from Eric Ward, NOAA
 ## Useful references: Gelman et al. 2013. Bayesian Data Analysis 3rd ed. , Carpenter et al. 2016. Stan: A probabilistic programming language. Journal of Statistical Software
 
+
+TASKS
+for all figures make sure size 7
+ggplot2::theme_update(text = element_text(size=7))
+
+
+
+
 #1 Set up
 load packages, read in and prepare data for analysis 
 ```{r}
@@ -35,7 +43,7 @@ flights <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPatt
 #flights <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv",stringsAsFactor=F)
 ```
 
-#setting a common lakeID for all lakes
+##setting a common lakeID for all lakes
 ```{r}
 #eliminating non-freshwater take off indicated by Type==3 in LakeList
 s_list <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
@@ -48,7 +56,7 @@ lakeList2 <- lakeList2[,1:8]
 write.csv(lakeList2, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/lakeList2.csv")
 ```
 
-#Data preparation
+#2 Data preparation
 ```{r}
 #eliminate flights from runways (amphibious planes)
 runway <- lakeList%>%
@@ -101,23 +109,8 @@ n <- data$flights
 y <- data$eflights
 ```
 
-Testing for heterogeneity of proportions
-```{r}
-library(rstatix)
-# Homogeneity of proportions between groups
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-# H0: the proportion of eflights is similar for each lake
-xtab <- as.table(rbind(y, n-y))
-
-# Compare the proportions of eflights between lakes
-propTest <- prop_test(xtab, detailed=TRUE)
-
-# Pairwise comparison between lakes
-pwPropTest <- pairwise_prop_test(xtab, p.adjust.method = "hochberg")
-```
-
-
-#2 Partial pooling Model
+#3 Modeling
+## Partial pooling model
 Following: https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#observed-vs.estimated-chance-of-success
 ```{r}
 library(rstanarm)
@@ -138,6 +131,49 @@ fit_partialpool <-
              prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000) #The left-hand side of the formula specifies the binomial outcome by providing the number of successes (hits) and failures (flights from non-sources) for each lake, and the right-hand side indicates that we want an intercept-only model.
 ```
 
+##No pooling model
+```{r}
+#Complete pooling model
+fit_pool <- 
+  stan_glm(cbind(y, n - y) ~ 1, data = data, family = binomial("logit"),
+             prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000)
+
+invlogit <- plogis  # function(x) 1/(1 + exp(-x))
+summary_stats <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
+}
+
+pool <- summary_stats(as.matrix(fit_pool))  # as.matrix extracts the posterior draws
+pool <- matrix(pool,  # replicate to give each player the same estimates
+               nrow(data), ncol(pool), byrow = TRUE, 
+               dimnames = list(data$LakeID, c("10%", "50%", "90%")))
+intro_avg(pool)
+
+#no pooling model
+fit_nopool <- update(fit_pool, formula = . ~ 0 + Lake, prior = wi_prior)
+nopool <- summary_stats(as.matrix(fit_nopool))
+rownames(nopool) <- as.character(data$LakeID)
+intro_avg(nopool)
+```
+
+#4 Validation
+Using cross-validation for model checking and comparison, approximating the expected log predictive density (the lower the better) in the third column of the output. Specifically, it is the leave-one-out (loo) approximation to the log predictive density. Even though this approximation is only asymptotically valid, as it likely underestimates the expected log predictive density, the relative ranking of the models is the same as if it would be correctly calculated. https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#partial-pooling
+```{r}
+loo_compare(loo(fit_partialpool), loo(fit_pool), loo(fit_nopool))
+```
+               elpd_diff se_diff 
+fit_partialpool      0.0       0.0
+fit_nopool       -1382.5      40.9
+fit_pool        -11271.8    1835.2
+
+The partial pool model with the flat non-informative prior outperforms the model with the weakly informative prior. 
+                   elpd_diff se_diff
+fit_partialpool     0.0       0.0   
+fit_partialpool_wi -7.7       2.6
+
+
+
 #3 Plotting results table
 TASK turn this into a dataframe and combine with other ref info, keep model evaluation parameters Rhat etc.
 TASK 2: color know elodea locations
@@ -156,16 +192,16 @@ intro_avg(partialpool)
 partialpoolDF <- as.data.frame(partialpool)
 partialpoolDF <- rownames_to_column(partialpoolDF, var="LakeID")
 
-#save summary of fitted model as data.frame
+#save summary of fitted model as data.frame, remember this is in log-odds, so further down we add the above code which shifted results from logit to proportion space. 
 summary(fit_partialpool)
 diag_partial <-as.data.frame(summary(fit_partialpool))
 #moving rownames into column
 diag_partial <- rownames_to_column(diag_partial, var="LakeID")
 #extracting intercept, sigma, mean PPD, log-posterior to save for later
-drop_rows <- diag_partial[(diag_partial$LakeID %in% c("(Intercept)","Sigma[Player:(Intercept),(Intercept)]","mean_PPD","log-posterior")), ] 
+drop_rows <- diag_partial[(diag_partial$LakeID %in% c("(Intercept)","Sigma[Lake:(Intercept),(Intercept)]","mean_PPD","log-posterior")), ] 
 #dropping the above
-diag_partial <- diag_partial[ !(diag_partial$LakeID %in% c("(Intercept)","Sigma[Player:(Intercept),(Intercept)]","mean_PPD","log-posterior")), ] #cleaning up LakeID by first extracting string that starts with Lk and ends with ]
-diag_partial$LakeID <- str_extract_all(diag_partial$LakeID, "LK.+]")
+diag_partial <- diag_partial[ !(diag_partial$LakeID %in% c("(Intercept)","Sigma[Lake:(Intercept),(Intercept)]","mean_PPD","log-posterior")), ] #cleaning up LakeID by first extracting string that starts with Lk and ends with ]
+diag_partial$LakeID <- gsub("b[(Intercept) Lake:","",diag_partial$LakeID, fixed=T)
 diag_partial$LakeID <- substr(diag_partial$LakeID, 1, nchar(diag_partial$LakeID)-1)
 #drop columns showing log-odds
 diag_partial <- diag_partial %>%
@@ -174,36 +210,75 @@ diag_partial <- diag_partial %>%
 #joining dataframe to create results table incl. diagnostics, except sigma, mean PPD, log-posterior
 partialpoolResults <- diag_partial%>%
   left_join(partialpoolDF, by="LakeID")
+
+#diagnosing Gelman-Rubin statistic
+partialpoolResults%>%
+  summarise(RhatTotal =sum(Rhat>1.05), mcseTotal =sum(mcse>.1))
+
 ```
+Results: None of the lakes had Rhat larger than 1.05. 
 
-
-#Complete pooling model
+#Diagnostics for partial pooling model
 ```{r}
-fit_pool <- 
-  stan_glm(cbind(y, n - y) ~ 1, data = data, family = binomial("logit"),
-             prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=2000)
+#Evaluating model convergence and diagnose model through STAN online portal
+launch_shinystan(fit_partialpool)
 
-invlogit <- plogis  # function(x) 1/(1 + exp(-x))
-summary_stats <- function(posterior) {
-  x <- invlogit(posterior)  # log-odds -> probabilities
-  t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
+rhat_fig <- plot(fit_partialpool, "rhat")
+rhat_fig
+ess_fig <- plot(fit_partialpool, "ess")
+ess_fig
+ggsave("STAN/flights_model/figures/ManuscriptFigures/ess_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+59 of the lakes showed neff/n <0.1, thus lower sampling quality there but still convergence
+
+#Graphical posterior predictive checks
+see: https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#graphical-posterior-predictive-checks
+```{r}
+#T stats plot
+tstat_plots <- function(model, stats) {
+  lapply(stats, function(stat) {
+    graph <- pp_check(model, plotfun = "stat", stat = stat, 
+                      seed = SEED) # optional arguments
+    graph + xlab(stat) + theme(legend.position = "none")
+  })
 }
+Tstats <- c("mean", "sd", "min","max")
+#ppcs_nopool <- tstat_plots(fit_nopool, Tstats)
+ppcs_partialpool <- tstat_plots(fit_partialpool, Tstats)
 
-pool <- summary_stats(as.matrix(fit_pool))  # as.matrix extracts the posterior draws
-pool <- matrix(pool,  # replicate to give each player the same estimates
-               nrow(data), ncol(pool), byrow = TRUE, 
-               dimnames = list(data$LakeID, c("10%", "50%", "90%")))
-intro_avg(pool)
+library(gridExtra)
+g<-grid.arrange(
+  #arrangeGrob(grobs = ppcs_nopool, nrow = 1, left = "No Pooling"),
+  arrangeGrob(grobs = ppcs_partialpool, nrow = 2)
+)
+
+ggsave("STAN/flights_model/figures/ManuscriptFigures/t_stats.tiff", plot = last_plot(), device = "tiff", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#Distributions of observed data and a random sample of replications
+replicate <- pp_check(fit_partialpool, plotfun = "hist", nreps = 15, binwidth = 0.05) +
+  xlab("AIS introduction rate") + ylab("Frequency") 
+replicate
+ggsave("STAN/flights_model/figures/ManuscriptFigures/replicate.tiff", plot = replicate, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#convergence check after warm-up
+color_scheme_set("mix-blue-red")
+theme_set(theme_classic(base_size = 9))
+con_test_fig <- mcmc_trace(fit_partialpool, pars = c("b[(Intercept) Lake:Lk_285505]","b[(Intercept) Lake:Lk_268]","b[(Intercept) Lake:Lk_243881]"),
+           facet_args = list(nrow = 3)) + ggplot2::theme_update(text = element_text(size=7)) + facet_grid(. ~ model) + 
+
+LH <- con_test_fig + xlab("iterations after warm up") + scale_y_continuous(expression(paste( alpha[j])))
+LH
+ggsave("STAN/flights_model/figures/ManuscriptFigures/trace_plots.tiff", plot = LH, device = "tiff", path = NULL,
+  scale = 1, width = 90, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
 ```
 
-#no pooling model
-```{r}
-fit_nopool <- update(fit_pool, formula = . ~ 0 + Lake, prior = wi_prior)
-nopool <- summary_stats(as.matrix(fit_nopool))
-rownames(nopool) <- as.character(data$LakeID)
-intro_avg(nopool)
-
-```
 
 #Plotting predicted against the data, Posterior Medians and 80% Intervals
 ```{r}
@@ -213,45 +288,84 @@ estimates <- rbind(nopool,partialpool)  #pool, nopool,
 colnames(estimates) <- c("lb", "median", "ub")
 plotdata <- data.frame(estimates, 
                        observed = rep(lake_avgs, times = length(models)), 
-                       model = rep(models, each = J), 
-                       row.names = NULL)
+                       model = rep(models, each = J))
+plotdata$LakeID <- rownames(plotdata)
+#cleaning up LakeID due to rbind command above
+plotdata$LakeID <- with(plotdata,ifelse(model=="partial pooling",substr(plotdata$LakeID, 1, nchar(plotdata$LakeID)-2),plotdata$LakeID))
 
-ggplot(plotdata, aes(x = observed, y = median, ymin = lb, ymax = ub)) +
-  geom_hline(yintercept = tot_avg, color = "lightpink", size = 0.75) +
+
+#creating an elodea Lakes table, a new variable consistent with fit object, then added to plot data
+elodeaLakes <- lakeList2%>%
+  filter(Elodea==1 & LakeName !="Tanana River")%>%
+  select(LakeID,Elodea,LakeName)%>%
+  mutate(modelID=paste("b[(Intercept) Lake:",LakeID,"]", sep=''))
+
+plotdata <- plotdata%>%
+  left_join(elodeaLakes,by="LakeID")
+
+highlight_plot <- plotdata %>% 
+             filter(Elodea==1)%>%
+              mutate(LakeName=replace(LakeName, LakeName=="Lake Hood/Lake Spenard", "Lake Hood"))
+#comparison plot
+compare <- ggplot(plotdata, aes(x = observed, y = median, ymin = lb, ymax = ub)) +
   geom_abline(intercept = 0, slope = 1, color = "skyblue") + 
   geom_linerange(color = "gray60", size = 0.75) + 
   geom_point(size = 2.5, shape = 21, fill = "gray30", color = "white", stroke = 0.2) + 
+  geom_point(data=highlight_plot, 
+             aes(x=observed,y=median), 
+           color='red',
+             size=2.5) +
+  #ggrepel::geom_text_repel(data = highlight_plot,aes(label=LakeName), hjust="inward",vjust=0)+
   facet_grid(. ~ model) +
   coord_fixed() +
   scale_x_continuous(breaks = c(0.25,0.50,0.75,1.0)) +
-  labs(x = "Observed y / n", y = "Predicted chance of AIS introduction") 
+  labs(x = "Observed y / n", y = expression(paste("Predicted, ",theta["j"])))
+compare
 
-ggsave("STAN/flights_model/figures/post_med_compare.bmp", plot = last_plot(), device = "tiff", path = NULL,
-  scale = 1, width = 140, height = 90, units = "mm",
+#partial pool model plot
+theme_set(theme_classic(base_size = 9))
+compare2 <- ggplot(subset(plotdata,model=="partial pooling"), aes(x = observed, y = median, ymin = lb, ymax = ub)) +
+  geom_abline(intercept = 0, slope = 1, color = "skyblue") + 
+  geom_linerange(color = "gray60", size = 0.75) + 
+  geom_point(size = 2.5, shape = 21, fill = "gray30", color = "white", stroke = 0.2) + 
+  geom_point(data=subset(highlight_plot,model=="partial pooling"), 
+             aes(x=observed,y=median), 
+             color='red',
+             size=2.5) +
+  ggrepel::geom_label_repel(data = subset(highlight_plot,model=="partial pooling"),aes(label=LakeName), hjust="inward",vjust=14, size=3, point.padding = 0.5, segment.alpha=0.3)+
+  #facet_grid(. ~ model) +
+  coord_fixed() +
+  scale_x_continuous(breaks = c(0.25,0.50,0.75,1.0)) +
+  labs(x = "Observed y / n", y = expression(paste("Predicted, ",theta["j"])))
+compare2
+
+ggsave("STAN/flights_model/figures/ManuscriptFigures/compare.tiff", plot = compare2, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 140, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
 
-#Cross-validation for model checking and comparison
-approximating the expected log predictive density (the lower the better) in the third column of the output. Specifically, it is the leave-one-out (loo) approximation to the log predictive density. Even though this approximation is only asymptotically valid, as it likely underestimates the expected log predictive density, the relative ranking of the models is the same as if it would be correctly calculated. https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#partial-pooling
+
+#Plotting posterior distributions for eldoea invaded lakes
 ```{r}
+posterior <- as.matrix(fit_partialpool)
 
-loo_compare(loo(fit_partialpool), loo(fit_partialpool_wi))
+mat <- as.data.frame(posterior)
+mat_sub <- names(mat)[(names(mat) %in% elodeaLakes$modelID)]
 
-loo_compare(loo(fit_partialpool), loo(fit_pool), loo(fit_nopool))
+
+
+posterior <- select(posterior, colnames())
+
+
+
+
+
+
+mcmc_areas(posterior,
+           pars = elodeaLakes$ModelID,
+           prob = 0.8)
+
 ```
-               elpd_diff se_diff 
-fit_partialpool      0.0       0.0
-fit_nopool       -1382.5      40.9
-fit_pool        -11271.8    1835.2
-
-The partial pool model with the flat non-informative prior outperforms the model with the weakly informative prior. 
-                   elpd_diff se_diff
-fit_partialpool     0.0       0.0   
-fit_partialpool_wi -7.7       2.6
-
-
-
-#Predicting new observations
 
 
 
@@ -484,4 +598,25 @@ plot(nondiv_samples$b, log(nondiv_samples$sigma),
      xlab="b", ylab="log(sigma)")
 points(div_samples$b, log(div_samples$sigma),
        col="green", pch=16, cex=0.8)
+```
+
+
+PARKING LOT
+
+
+
+
+Testing for heterogeneity of proportions
+```{r}
+library(rstatix)
+# Homogeneity of proportions between groups
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# H0: the proportion of eflights is similar for each lake
+xtab <- as.table(rbind(y, n-y))
+
+# Compare the proportions of eflights between lakes
+propTest <- prop_test(xtab, detailed=TRUE)
+
+# Pairwise comparison between lakes
+pwPropTest <- pairwise_prop_test(xtab, p.adjust.method = "hochberg")
 ```
