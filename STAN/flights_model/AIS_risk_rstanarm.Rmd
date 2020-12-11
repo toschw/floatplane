@@ -37,23 +37,24 @@ theme_set(theme_classic(base_size = 9))
 #importing data archived at https://doi.org/10.18739/A25H7BV1C 
 #data <- read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaac2cc93-04f3-4e5c-b36b-01120993f1d8",      method="libcurl"))
 #ref  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3A8ed27563-55f2-4273-a272-09406d85419b",method="libcurl")) 
-lakeList <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv")
-flights <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv")
-#lakeList <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv",stringsAsFactor=F)
-#flights <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv",stringsAsFactor=F)
+#lakeList <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv")
+#flights <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv")
+lakeList <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv",stringsAsFactor=F)
+flights <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv",stringsAsFactor=F)
 ```
 
 ##setting a common lakeID for all lakes
 ```{r}
 #eliminating non-freshwater take off indicated by Type==3 in LakeList
-s_list <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
+#s_list <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
+s_list <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
 lakeList2 <- lakeList%>%
   filter(Type!=3)%>%
   left_join(s_list, by=c("SeaplaneBase"="StartID"))
 #recoding Stlk_# with Lk_#
 lakeList2$LakeID  <- with(lakeList2, ifelse( str_detect(LakeID,"Stlk_"), UniqueID,LakeID))
 lakeList2 <- lakeList2[,1:8] 
-write.csv(lakeList2, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/lakeList2.csv")
+write.csv(lakeList2, file="C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/lakeList2.csv")
 ```
 
 #2 Data preparation
@@ -279,8 +280,23 @@ ggsave("STAN/flights_model/figures/ManuscriptFigures/trace_plots.tiff", plot = L
   dpi = 300, limitsize = TRUE)
 ```
 
+#creating an elodea Lakes table, a new variable consistent with fit object, then added to plot data
+```{r}
+elodeaLakes <- lakeList2%>%
+  filter(Elodea==1 & LakeName !="Tanana River")%>%
+  select(LakeID,Elodea,LakeName)%>%
+  mutate(modelID=paste("b[(Intercept) Lake:",LakeID,"]", sep=''))%>%
+  mutate(LakeName=replace(LakeName, LakeName=="Lake Hood/Lake Spenard", "Lake Hood"))
+
+#adding columns for urban source lakes
+sourcelk <- c("Beck Lake","Sand Lake")
+elodeaLakes <- elodeaLakes%>%
+  mutate(source=LakeName %in% sourcelk)
+
+```
 
 #Plotting predicted against the data, Posterior Medians and 80% Intervals
+Below we also create a reference table associated with all the AIS invaded lakes
 ```{r}
 library(ggplot2)
 models <- c("no pooling","partial pooling")  #"complete pooling"
@@ -294,18 +310,14 @@ plotdata$LakeID <- rownames(plotdata)
 plotdata$LakeID <- with(plotdata,ifelse(model=="partial pooling",substr(plotdata$LakeID, 1, nchar(plotdata$LakeID)-2),plotdata$LakeID))
 
 
-#creating an elodea Lakes table, a new variable consistent with fit object, then added to plot data
-elodeaLakes <- lakeList2%>%
-  filter(Elodea==1 & LakeName !="Tanana River")%>%
-  select(LakeID,Elodea,LakeName)%>%
-  mutate(modelID=paste("b[(Intercept) Lake:",LakeID,"]", sep=''))
+
 
 plotdata <- plotdata%>%
   left_join(elodeaLakes,by="LakeID")
 
 highlight_plot <- plotdata %>% 
-             filter(Elodea==1)%>%
-              mutate(LakeName=replace(LakeName, LakeName=="Lake Hood/Lake Spenard", "Lake Hood"))
+             filter(Elodea==1)
+              
 #comparison plot
 compare <- ggplot(plotdata, aes(x = observed, y = median, ymin = lb, ymax = ub)) +
   geom_abline(intercept = 0, slope = 1, color = "skyblue") + 
@@ -347,24 +359,20 @@ ggsave("STAN/flights_model/figures/ManuscriptFigures/compare.tiff", plot = compa
 
 #Plotting posterior distributions for eldoea invaded lakes
 ```{r}
-posterior <- as.matrix(fit_partialpool)
+posterior_alphas <- as.matrix(fit_partialpool)
+#transforming alphas to thetas
+posterior_thetas <- 1/(1+exp(-posterior_alphas))
+#creating a character vector for the elodeaLakes to be plotted except for the urban source lakes Beck and Sand Lake 
+elodeaLakes
 
-mat <- as.data.frame(posterior)
-mat_sub <- names(mat)[(names(mat) %in% elodeaLakes$modelID)]
-
-
-
-posterior <- select(posterior, colnames())
-
-
-
-
-
-
-mcmc_areas(posterior,
-           pars = elodeaLakes$ModelID,
-           prob = 0.8)
-
+elodeaLakes2 <- elodeaLakes%>%
+  filter(source=="FALSE")
+  
+chvector <as.vector(elodeaLakes2$modelID)
+mcmc_areas(posterior_thetas,
+           pars = as.vector(elodeaLakes2$modelID),
+           prob = 0.8, area_method = "equal height",
+           point_est="median")
 ```
 
 
