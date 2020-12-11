@@ -270,12 +270,19 @@ ggsave("STAN/flights_model/figures/ManuscriptFigures/replicate.tiff", plot = rep
 #convergence check after warm-up
 color_scheme_set("mix-blue-red")
 theme_set(theme_classic(base_size = 9))
-con_test_fig <- mcmc_trace(fit_partialpool, pars = c("b[(Intercept) Lake:Lk_285505]","b[(Intercept) Lake:Lk_268]","b[(Intercept) Lake:Lk_243881]"),
-           facet_args = list(nrow = 3)) + ggplot2::theme_update(text = element_text(size=7)) + facet_grid(. ~ model) + 
+traceplot <- mcmc_trace(fit_partialpool, pars = c("b[(Intercept) Lake:Lk_285505]",
+                                                  "b[(Intercept) Lake:Lk_268]",
+                                                  "b[(Intercept) Lake:Lk_243881]"),
+           facet_args = list(nrow = 3)) 
 
-LH <- con_test_fig + xlab("iterations after warm up") + scale_y_continuous(expression(paste( alpha[j])))
-LH
-ggsave("STAN/flights_model/figures/ManuscriptFigures/trace_plots.tiff", plot = LH, device = "tiff", path = NULL,
+levels(traceplot$data$parameter)[1] <- "Lake Hood"
+levels(traceplot$data$parameter)[2] <- "Big Lake"
+levels(traceplot$data$parameter)[3] <- "Martin Lake"
+traceplot <- traceplot + xlab("iterations after warm up") +
+                          scale_y_continuous(expression(paste( alpha[j])))
+traceplot
+
+ggsave("STAN/flights_model/figures/ManuscriptFigures/trace_plots.tiff", plot = traceplot, device = "tiff", path = NULL,
   scale = 1, width = 90, height = 140, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
@@ -308,9 +315,6 @@ plotdata <- data.frame(estimates,
 plotdata$LakeID <- rownames(plotdata)
 #cleaning up LakeID due to rbind command above
 plotdata$LakeID <- with(plotdata,ifelse(model=="partial pooling",substr(plotdata$LakeID, 1, nchar(plotdata$LakeID)-2),plotdata$LakeID))
-
-
-
 
 plotdata <- plotdata%>%
   left_join(elodeaLakes,by="LakeID")
@@ -363,17 +367,45 @@ posterior_alphas <- as.matrix(fit_partialpool)
 #transforming alphas to thetas
 posterior_thetas <- 1/(1+exp(-posterior_alphas))
 #creating a character vector for the elodeaLakes to be plotted except for the urban source lakes Beck and Sand Lake 
-elodeaLakes
 
 elodeaLakes2 <- elodeaLakes%>%
   filter(source=="FALSE")
   
-chvector <as.vector(elodeaLakes2$modelID)
-mcmc_areas(posterior_thetas,
-           pars = as.vector(elodeaLakes2$modelID),
-           prob = 0.8, area_method = "equal height",
-           point_est="median")
+test
+levels(test$data$parameter)[1] <- "dsaf1"
+levels(test$data$parameter)[2] <- "dsaf2"
+levels(test$data$parameter)[3] <- "dsaf3"
+levels(test$data$parameter)[4] <- "dsaf4"
+levels(test$data$parameter)[5] <- "dsaf5"
+levels(test$data$parameter)[6] <- "dsaf6"
+levels(test$data$parameter)[7] <- "dsaf7"
+levels(test$data$parameter)[8] <- "dsaf8"
+levels(test$data$parameter)[9] <- "dsaf9"
+levels(test$data$parameter)[10] <- "dsaf10"
+
+test <- test + xlab("iteration") + ylab("posterior for theta(j)")
+test
+
+
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -432,38 +464,6 @@ ggsave("STAN/flights_model/figures/datafit3Figures/ScatterFig.bmp", plot = last_
   dpi = 300, limitsize = TRUE)
 ```
 
-##4.2 Model checking
-external validation
-```{r}
-data_sims <- extract(datafit3, permuted=TRUE)
-theta_rep <- array(NA,c(n_sims,J))
-y_rep <- array(NA,c(n_sims,J))
-for (s in 1:n_sims){
-  theta_rep[s,] <- rbeta(J,data_sims$alpha[s],data_sims$beta[s])
-  y_rep[s,] <- rbinom(J,n_sims,theta_rep[s,])
-}
-
- #displaying replicated data
-par(mfrow=c(5,4),mar=c(4,4,2,2))
-hist(y/n,xlab="",main="observed")
-for (s in 1:19)
-  hist(theta_rep[s,], xlab="",main=paste("theta_rep",s))
- #Saved figure manually for Supplementary File
-
- #calculating mean and SD for replicated new data
-theta_rep_mean <- mean(theta_rep)
-theta_rep_mean
-theta_rep_sd <- sd(theta_rep)
-theta_rep_sd
-
-ratios_cp <- neff_ratio(datafit3)
-mcmc_neff(ratios_cp, size = 2)
-```
-Results:
-theta_rep_mean = 0.236
-theta_rep_sd = 0.361
-
-Also, the ratios are very low, below 0.1 which may hint torwards the need to reparameterize. See: https://cran.r-project.org/web/packages/bayesplot/vignettes/visual-mcmc-diagnostics.html#rhat-potential-scale-reduction-statistic
 
 ##4.3 Convergence check
 Rhat, traceplot, energy plot, pairs plot 
