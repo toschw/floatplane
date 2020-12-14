@@ -37,24 +37,35 @@ theme_set(theme_classic(base_size = 9))
 #importing data archived at https://doi.org/10.18739/A25H7BV1C 
 #data <- read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaac2cc93-04f3-4e5c-b36b-01120993f1d8",      method="libcurl"))
 #ref  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3A8ed27563-55f2-4273-a272-09406d85419b",method="libcurl")) 
-#lakeList <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv")
-#flights <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv")
-lakeList <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv",stringsAsFactor=F)
-flights <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv",stringsAsFactor=F)
+lakeList <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv")
+flights <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long2.csv")
+#lakeList <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv",stringsAsFactor=F)
+#flights <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv",stringsAsFactor=F)
 ```
 
 ##setting a common lakeID for all lakes
 ```{r}
 #eliminating non-freshwater take off indicated by Type==3 in LakeList
-#s_list <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
-s_list <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
+s_list <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
+#s_list <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
 lakeList2 <- lakeList%>%
   filter(Type!=3)%>%
   left_join(s_list, by=c("SeaplaneBase"="StartID"))
 #recoding Stlk_# with Lk_#
-lakeList2$LakeID  <- with(lakeList2, ifelse( str_detect(LakeID,"Stlk_"), UniqueID,LakeID))
-lakeList2 <- lakeList2[,1:8] 
-write.csv(lakeList2, file="C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/lakeList2.csv")
+lakeList2$LakeID  <- with(lakeList2, ifelse(str_detect(LakeID,"Stlk_"), UniqueID,LakeID))
+lakeList2 <- lakeList2[,1:8]
+
+#Adding HUC6 code and Region name
+LakeRegion <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeRegion.csv",stringsAsFactor=F)
+lakeList2 <- lakeList2%>%
+  left_join(LakeRegion,by="LakeID")
+
+#checking for any duplicates in lakeList
+lakeList2 %>% 
+  group_by(LakeID) %>% 
+  filter(n()>1)
+
+#write.csv(lakeList2, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/lakeList2.csv")
 ```
 
 #2 Data preparation
@@ -63,8 +74,8 @@ write.csv(lakeList2, file="C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_
 runway <- lakeList%>%
   filter(Type==3)
 v <-runway$LakeID
-#drop rows associated with runway start location
-flights <- flights[!(flights$StartID %in% v), ]
+#drop rows associated with type 3 start and destination locations
+flights <- flights[!(flights$StartID %in% v) & !(flights$DestID %in% v), ]
 
 #create ElodeaO and ElodeaD indicating whether origin or destination is known elodea source
 starts <- filter(lakeList, lakeList$SeaplaneBase != "")
@@ -111,7 +122,7 @@ y <- data$eflights
 ```
 
 #3 Modeling
-## Partial pooling model
+## Partial pooling model, complete pooling model, and no pooling model
 Following: https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#observed-vs.estimated-chance-of-success
 ```{r}
 library(rstanarm)
@@ -132,9 +143,8 @@ fit_partialpool <-
              prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000) #The left-hand side of the formula specifies the binomial outcome by providing the number of successes (hits) and failures (flights from non-sources) for each lake, and the right-hand side indicates that we want an intercept-only model.
 ```
 
-##No pooling model
-```{r}
 #Complete pooling model
+```{r}
 fit_pool <- 
   stan_glm(cbind(y, n - y) ~ 1, data = data, family = binomial("logit"),
              prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000)
@@ -151,7 +161,7 @@ pool <- matrix(pool,  # replicate to give each player the same estimates
                dimnames = list(data$LakeID, c("10%", "50%", "90%")))
 intro_avg(pool)
 
-#no pooling model
+#No pooling model
 fit_nopool <- update(fit_pool, formula = . ~ 0 + Lake, prior = wi_prior)
 nopool <- summary_stats(as.matrix(fit_nopool))
 rownames(nopool) <- as.character(data$LakeID)
@@ -215,24 +225,33 @@ partialpoolResults <- diag_partial%>%
 #diagnosing Gelman-Rubin statistic
 partialpoolResults%>%
   summarise(RhatTotal =sum(Rhat>1.05), mcseTotal =sum(mcse>.1))
-
 ```
 Results: None of the lakes had Rhat larger than 1.05. 
 
 #Diagnostics for partial pooling model
 ```{r}
 #Evaluating model convergence and diagnose model through STAN online portal
-launch_shinystan(fit_partialpool)
-
+#launch_shinystan(fit_partialpool)
+color_scheme_set("blue")
 rhat_fig <- plot(fit_partialpool, "rhat")
 rhat_fig
 ess_fig <- plot(fit_partialpool, "ess")
 ess_fig
-ggsave("STAN/flights_model/figures/ManuscriptFigures/ess_fig.bmp", plot = last_plot(), device = "bmp", path = NULL,
+ggsave("STAN/flights_model/figures/ManuscriptFigures/ess_fig.tiff", plot = last_plot(), device = "tiff", path = NULL,
   scale = 1, width = 90, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
+
+low_ess <- partialpoolResults%>%
+  left_join(lakeList2, by="LakeID")%>%
+  mutate(ess_N=n_eff/10000)%>%
+  filter(ess_N<=0.1)
+
+#number of seaplane bases with low ess
+low_ess%>%
+  filter(SeaplaneBase!="")%>%
+  summarize(count=n())
 ```
-59 of the lakes showed neff/n <0.1, thus lower sampling quality there but still convergence
+57 of the lakes showed neff/n <0.1, of which 30 are seaplane bases, thus lower sampling quality there but still convergence
 
 #Graphical posterior predictive checks
 see: https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#graphical-posterior-predictive-checks
@@ -250,7 +269,7 @@ Tstats <- c("mean", "sd", "min","max")
 ppcs_partialpool <- tstat_plots(fit_partialpool, Tstats)
 
 library(gridExtra)
-g<-grid.arrange(
+grid.arrange(
   #arrangeGrob(grobs = ppcs_nopool, nrow = 1, left = "No Pooling"),
   arrangeGrob(grobs = ppcs_partialpool, nrow = 2)
 )
@@ -267,7 +286,7 @@ ggsave("STAN/flights_model/figures/ManuscriptFigures/replicate.tiff", plot = rep
   scale = 1, width = 140, height = 140, units = "mm",
   dpi = 300, limitsize = TRUE)
 
-#convergence check after warm-up
+#traceplot for convergence check after warm-up
 color_scheme_set("mix-blue-red")
 theme_set(theme_classic(base_size = 9))
 traceplot <- mcmc_trace(fit_partialpool, pars = c("b[(Intercept) Lake:Lk_285505]",
@@ -282,25 +301,26 @@ traceplot <- traceplot + xlab("iterations after warm up") +
                           scale_y_continuous(expression(paste( alpha[j])))
 traceplot
 
+#traceplot for the three lakes with the lowest effective sample size n_eff, also including divergent transitions
+np_model <- nuts_params(fit_partialpool)  #checks and visualizes divergences in the traceplots
+color_scheme_set("mix-blue-red")
+theme_set(theme_classic(base_size = 9))
+traceplot <- mcmc_trace(fit_partialpool, pars = c("b[(Intercept) Lake:Lk_285505]",
+                                                  "b[(Intercept) Lake:Lk_315787]",
+                                                  "b[(Intercept) Lake:Lk_36723]"),
+                                        facet_args = list(nrow = 3),
+                                        np=np_model) 
+levels(traceplot$data$parameter)[1] <- "Lake Hood"
+levels(traceplot$data$parameter)[2] <- "Big River Lakes"
+levels(traceplot$data$parameter)[3] <- "Naknek Lake"
+traceplot <- traceplot + xlab("iterations after warm up") +
+                          scale_y_continuous(expression(paste( alpha[j])))
+traceplot
 ggsave("STAN/flights_model/figures/ManuscriptFigures/trace_plots.tiff", plot = traceplot, device = "tiff", path = NULL,
   scale = 1, width = 90, height = 140, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
-
-#creating an elodea Lakes table, a new variable consistent with fit object, then added to plot data
-```{r}
-elodeaLakes <- lakeList2%>%
-  filter(Elodea==1 & LakeName !="Tanana River")%>%
-  select(LakeID,Elodea,LakeName)%>%
-  mutate(modelID=paste("b[(Intercept) Lake:",LakeID,"]", sep=''))%>%
-  mutate(LakeName=replace(LakeName, LakeName=="Lake Hood/Lake Spenard", "Lake Hood"))
-
-#adding columns for urban source lakes
-sourcelk <- c("Beck Lake","Sand Lake")
-elodeaLakes <- elodeaLakes%>%
-  mutate(source=LakeName %in% sourcelk)
-
-```
+Result: no divergences in the three lakes with the lowest effective sample size
 
 #Plotting predicted against the data, Posterior Medians and 80% Intervals
 Below we also create a reference table associated with all the AIS invaded lakes
@@ -315,32 +335,28 @@ plotdata <- data.frame(estimates,
 plotdata$LakeID <- rownames(plotdata)
 #cleaning up LakeID due to rbind command above
 plotdata$LakeID <- with(plotdata,ifelse(model=="partial pooling",substr(plotdata$LakeID, 1, nchar(plotdata$LakeID)-2),plotdata$LakeID))
-
 plotdata <- plotdata%>%
   left_join(elodeaLakes,by="LakeID")
-
 highlight_plot <- plotdata %>% 
              filter(Elodea==1)
               
 #comparison plot
-compare <- ggplot(plotdata, aes(x = observed, y = median, ymin = lb, ymax = ub)) +
+compareModels <- ggplot(plotdata, aes(x = observed, y = median, ymin = lb, ymax = ub)) +
   geom_abline(intercept = 0, slope = 1, color = "skyblue") + 
   geom_linerange(color = "gray60", size = 0.75) + 
   geom_point(size = 2.5, shape = 21, fill = "gray30", color = "white", stroke = 0.2) + 
-  geom_point(data=highlight_plot, 
-             aes(x=observed,y=median), 
-           color='red',
-             size=2.5) +
-  #ggrepel::geom_text_repel(data = highlight_plot,aes(label=LakeName), hjust="inward",vjust=0)+
   facet_grid(. ~ model) +
   coord_fixed() +
   scale_x_continuous(breaks = c(0.25,0.50,0.75,1.0)) +
   labs(x = "Observed y / n", y = expression(paste("Predicted, ",theta["j"])))
-compare
+compareModels
+ggsave("STAN/flights_model/figures/ManuscriptFigures/compareModels.tiff", plot = compareModels, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
 
 #partial pool model plot
 theme_set(theme_classic(base_size = 9))
-compare2 <- ggplot(subset(plotdata,model=="partial pooling"), aes(x = observed, y = median, ymin = lb, ymax = ub)) +
+partialPlot <- ggplot(subset(plotdata,model=="partial pooling"), aes(x = observed, y = median, ymin = lb, ymax = ub)) +
   geom_abline(intercept = 0, slope = 1, color = "skyblue") + 
   geom_linerange(color = "gray60", size = 0.75) + 
   geom_point(size = 2.5, shape = 21, fill = "gray30", color = "white", stroke = 0.2) + 
@@ -348,45 +364,268 @@ compare2 <- ggplot(subset(plotdata,model=="partial pooling"), aes(x = observed, 
              aes(x=observed,y=median), 
              color='red',
              size=2.5) +
-  ggrepel::geom_label_repel(data = subset(highlight_plot,model=="partial pooling"),aes(label=LakeName), hjust="inward",vjust=14, size=3, point.padding = 0.5, segment.alpha=0.3)+
-  #facet_grid(. ~ model) +
+  ggrepel::geom_label_repel(data = subset(highlight_plot,model=="partial pooling"),aes(label=LakeName), 
+                            hjust="inward",vjust=14, size=3, point.padding = NA, segment.alpha=0.3)+
   coord_fixed() +
   scale_x_continuous(breaks = c(0.25,0.50,0.75,1.0)) +
   labs(x = "Observed y / n", y = expression(paste("Predicted, ",theta["j"])))
-compare2
+partialPlot
 
-ggsave("STAN/flights_model/figures/ManuscriptFigures/compare.tiff", plot = compare2, device = "tiff", path = NULL,
+ggsave("STAN/flights_model/figures/ManuscriptFigures/partialPlot.tiff", plot = partialPlot, device = "tiff", path = NULL,
   scale = 1, width = 140, height = 140, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
 
 
-#Plotting posterior distributions for eldoea invaded lakes
+#Plotting posterior distributions
+creating reference tables for later analysis and plotting
 ```{r}
-posterior_alphas <- as.matrix(fit_partialpool)
-#transforming alphas to thetas
-posterior_thetas <- 1/(1+exp(-posterior_alphas))
-#creating a character vector for the elodeaLakes to be plotted except for the urban source lakes Beck and Sand Lake 
+elodeaLakes <- lakeList2%>%
+  filter(Elodea==1 & LakeName !="Tanana River")%>%
+  select(LakeID,Elodea,LakeName)%>%
+  mutate(modelID=paste("b[(Intercept) Lake:",LakeID,"]", sep=''))%>%
+  mutate(LakeName=replace(LakeName, LakeName=="Lake Hood/Lake Spenard", "Lake Hood"))
 
-elodeaLakes2 <- elodeaLakes%>%
-  filter(source=="FALSE")
+spBases <- unique(lakeList2$SeaplaneBase[grep("^S", lakeList2$SeaplaneBase)])
+SpBases_List <- subset(lakeList2, SeaplaneBase %in% spBases)
+```
+
+1. posterior plots by region
+facet_grid did not show the data nicely, so created individual plots for each region
+```{r}
+allData <- partialpoolDF
+colnames(allData)[2] <- "llimit"
+colnames(allData)[3] <- "median"
+colnames(allData)[4] <- "ulimit"
+
+allData <- allData%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameID=paste(LakeName," ",LakeID))
+theme_set(theme_classic(base_size = 9))
+#Bristol Bay
+BB <- allData%>%
+  filter(Region=="Bristol Bay")
+BBplot <- BB %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Bristol Bay") +xlim(0, 1)
+BBplot
+
+#Cook Inlet
+CI <- allData%>%
+  filter(Region=="Cook Inlet")
+CIplot <- CI %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Cook Inlet") +xlim(0, 1)
+CIplot
+
+#Gulf
+Gulf <- allData%>%
+  filter(Region=="Gulf")
+Gulfplot <- Gulf %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Gulf") +xlim(0, 1)
+Gulfplot
+
+#Kuskokwim
+Kusko <- allData%>%
+  filter(Region=="Kuskokwim")
+Kuskoplot <- Kusko %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Kuskokwim") + xlim(0, 1)
+Kuskoplot
+
+#North Slope
+NS <- allData%>%
+  filter(Region=="North Slope")
+NSplot <- NS %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("North Slope") +xlim(0, 1)
+NSplot
+
+#Yukon
+YK <- allData%>%
+  filter(Region=="Yukon")
+YKplot <- YK %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("waterbodies") + xlab("posterior predictive distribution") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Yukon") +xlim(0, 1)
+YKplot
+
+#Knik Arm
+KA <- allData%>%
+  filter(Region=="Knik Arm")
+KAplot <- KA %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Knik Arm") +xlim(0, 1)
+KAplot
+
+#Kodiak
+K <- allData%>%
+  filter(Region=="Kodiak")
+Kplot <- K %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Kodiak") +xlim(0, 1)
+Kplot
+
+library(cowplot)
+theme_set(theme_cowplot(font_size=7))
+RegionPlot <-plot_grid(CIplot,Gulfplot,KAplot,Kplot,Kuskoplot,BBplot,YKplot,NSplot,  ncol = 2, align = "h", axis = "bt", rel_widths = c(1, 1) )
+RegionPlot
+ggsave("STAN/flights_model/figures/ManuscriptFigures/RegionPlot.tiff", plot = RegionPlot, device = "tiff",
+  path = NULL,
+  scale = 1, width = 140, height = 200, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+RegionPlot2 <-plot_grid(YKplotTest,NSplotTest,  ncol = 2, align = "h", axis = "bt", rel_widths = c(1, 1) )
+RegionPlot2
+ggsave("STAN/flights_model/figures/ManuscriptFigures/RegionPlot3.tiff", plot = RegionPlot2, device = "tiff",
+  path = NULL,
+  scale = 1, width = 140, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+```
+
+
+2. Elodea invaded lakes
+```{r}
+ElodeaData <- partialpoolDF%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  filter(Elodea==1 & LakeName!="Tanana River")
+colnames(ElodeaData)[2] <- "llimit"
+colnames(ElodeaData)[3] <- "median"
+colnames(ElodeaData)[4] <- "ulimit"
+
+EPlot<- ElodeaData %>%
+  mutate(LakeName=fct_reorder(LakeName,median)) %>%  #fct_reorder guarantees correct ordering of the labels with data in the plot
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeName, xmin = llimit, xmax = ulimit))+
+  #geom_point(data = pick(~Elodea == 1), colour = "red")+
+  ylab("") + xlab("posterior predictive distribution") 
+EPlot
+ggsave("STAN/flights_model/figures/ManuscriptFigures/EPlot.tiff", plot = EPlot, device = "tiff", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+3. Seaplane bases
+creating subset for seaplane bases, showing 80% posterior intervals
+```{r}
+spData <- partialpoolDF%>%
+  filter(LakeID%in%SpBases_List$LakeID)%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameCity=paste(LakeName," ",SPBaseCity))
+colnames(spData)[2] <- "llimit"
+colnames(spData)[3] <- "median"
+colnames(spData)[4] <- "ulimit"
+
+spPlot<- spData %>%
+  mutate(LakeNameCity=fct_reorder(LakeNameCity,median)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameCity, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2,color=ifelse(spData$Elodea==1, 'red', 'black'))+
+  #geom_point(data = pick(~Elodea == 1), colour = "red")+
+  ylab("") + xlab("posterior predictive distribution") 
+spPlot
+ggsave("STAN/flights_model/figures/ManuscriptFigures/SeaplaneBases.tiff", plot = spPlot, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 200, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#for a subset of the above, where median >0.07
+spData_H <-spData %>%
+  filter(median>0.07)
+spPlot_H<- spData_H %>%
+  mutate(LakeNameCity=fct_reorder(LakeNameCity,median)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameCity, xmin = llimit, xmax = ulimit), shape=19,fatten = 4, size = .2,color=ifelse(spData_H$Elodea==1, 'red', 'black'))+
+  ylab("") + xlab("posterior predictive distribution") +xlim(0, 1)
+spPlot_H
+
+ggsave("STAN/flights_model/figures/ManuscriptFigures/SeaplaneBases_H.tiff", plot = spPlot_H, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 140
+  , units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#Yukon based seaplane bases
+YKbases <- spData %>%
+  filter(Region=="Yukon")%>%
+  arrange(median)
+```
+
+#Regional statistics
+```{r}
+#Regional summary table
+regionWBcount <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/regionWBcount.csv")
+regionD <-allData%>%
+  group_by(Region)%>%
+  summarize(Lakescount=n())
+regionHAIS <- allData%>%  
+  filter(median>=0.5)%>%
+  group_by(Region)%>%
+  summarize(HighAIScount=n())
+regionS <- spData%>%
+  group_by(Region)%>%
+  summarize(SPBcount=n())
+regionTable <- regionD%>%
+  left_join(regionWBcount, by="Region")%>%
+  left_join(regionS, by ="Region")%>%
+  left_join(regionHAIS, by="Region")%>%
+  mutate(percentHigh=HighAIScount/Lakescount)
+write.csv(regionTable,"D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/RegionSummaryTable.csv")
   
-test
-levels(test$data$parameter)[1] <- "dsaf1"
-levels(test$data$parameter)[2] <- "dsaf2"
-levels(test$data$parameter)[3] <- "dsaf3"
-levels(test$data$parameter)[4] <- "dsaf4"
-levels(test$data$parameter)[5] <- "dsaf5"
-levels(test$data$parameter)[6] <- "dsaf6"
-levels(test$data$parameter)[7] <- "dsaf7"
-levels(test$data$parameter)[8] <- "dsaf8"
-levels(test$data$parameter)[9] <- "dsaf9"
-levels(test$data$parameter)[10] <- "dsaf10"
-
-test <- test + xlab("iteration") + ylab("posterior for theta(j)")
-test
-
-
+#Top Seaplane bases by region, first matching Destination ID with LakeID to get the destination region
+topSPB <- flights%>%
+  left_join(lakeList2,by=c("StartID"="SeaplaneBase"))%>%
+  select(LakeName,DestID,AnnualFl_1,Region)
+colnames(topSPB)[4] <- "StRegion"
+  topSPB <- topSPB%>%
+  left_join(select(lakeList2,LakeID,Region),by=c("DestID"="LakeID"))
+  
+topSPB <- topSPB%>%
+  group_by(LakeName, StRegion,Region)%>%
+  summarize(total = sum(AnnualFl_1))%>%
+  spread(Region,total)
+write.csv(topSPB,"D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/TopSeaplaneBasesTable.csv")    
 ```
 
 
@@ -401,212 +640,6 @@ test
 
 
 
-
-
-
-
-
-
-
-
-#3 Model output
-```{r}  
-#Save posterior summary statistics (contains sampling diagnostics)
-fit_summary <- summary(datafit)
-fit_summary.df <- as.data.frame(fit_summary$summary)
-fitS <- setDT(fit_summary.df, keep.rownames = "X")
-fitS <- fitS[1:727,]
-results <- fitS%>%
-  left_join(ref, by=c("X"="ï..modelID"))
-
-#Sort by median predicted introduction rate and inverse variance
-results <- results[order(-results$X50.,results$sd),]
-results <- results%>% 
-  mutate(rank = row_number())
-
-#Move columns for easier reading starting with Rank, UniqueID, 
-results <-results[c("rank","UniqueID","DestName","Name","RegionName","DestType","Lat", "Long","HUC8","GMU","mean","se_mean","sd","X2.5.","X25.","X50.","X75.","X97.5.","n_eff","Rhat","WithinNPS","WithinRefu","Suitab","Fetch_m","ElevMEAN","flights","eflights","X")]
-write.csv(results, file="/STANresults.csv",row.names = FALSE)
-```
-
-
-#4 Model diagnostic and validation
-##4.1 Posterior predictive check
-plotting observed introduction rates versus posterior medians with 95% posterior intervals
-```{r}
-library(plyr)
-library(dplyr)
-library(ggplot2)
-sdata <- read.csv("STAN/flights_model/fit_summary3.csv")
-data <-  read.csv("STAN/floatplanedata4.csv")
-data$rate <- data$eflights/data$flights
-
-theme_set(theme_classic(base_size = 7))
-
-##renaming columns of above data frame
-names(sdata)[5:9] <- c("perc3","perc25","perc50","perc75","perc97")
-#selecting first 729 rows for the draws
-sdata2 <- sdata[1:727,]
-sdata2 <- cbind(sdata2,data)
-
-ScatterFig <-  ggplot(sdata2, aes(x=sdata2$rate,y=sdata2$perc50)) +
-  geom_pointrange(aes(ymin=sdata2$perc3, ymax=sdata2$perc97)) + 
-  xlab("observed introduction rate")+ ylab("95% posterior interval for theta(j)") +
-  ylim(0,1)+ xlim(0,1) + geom_jitter(height=0,width=0.1)+ geom_abline(intercept = 0, slope = 1,colour='red')+
-  theme(axis.title.x = element_text(face="bold", colour="#000000", size=7),
-        axis.text.x  = element_text(face="bold", angle=0, vjust=0.5, size=7)) +
-  theme(axis.title.y = element_text(face="bold", colour="#000000", size=7),
-        axis.text.y  = element_text(face="bold", angle=360, vjust=0.5, size=7))+
-  theme(panel.background = element_rect(fill = 'white', colour="black"))
-ScatterFig
-ggsave("STAN/flights_model/figures/datafit3Figures/ScatterFig.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 90, height = 140, units = "mm",
-  dpi = 300, limitsize = TRUE)
-```
-
-
-##4.3 Convergence check
-Rhat, traceplot, energy plot, pairs plot 
-```{r}
-#number of lakes with Rhat<=1.05 Rhat<=1.1 and Rhat>1.1
-df <- fit_summary.df[1:727,]#subsetting to just include the thetas for 727 lakes
-df <- cbind(df,ref)
-nrow(subset(df,Rhat<=1.05))
-nrow(subset(df,Rhat<=1.1))
-nrow(subset(df,Rhat>1.1))
-
-
-#traceplots
-traceplot <- stan_trace(datafit3, pars = c("theta[322]","theta[324]","theta[518]","avg"), inc_warmup = TRUE, nrow = 9)
-levels(traceplot$data$parameter)[1] <- "Martin Lake"
-levels(traceplot$data$parameter)[2] <- "McKinley Lake"
-levels(traceplot$data$parameter)[3] <- "Alexander Lake"
-levels(traceplot$data$parameter)[4] <- "Average"
-traceplot <- traceplot + xlab("iteration") + ylab("posterior for theta(j)")
-traceplot
-
-ggsave("STAN/flights_model/figures/datafit3Figures/traceplot.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 140, height = 140, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#energy plot
-posterior_cp <- as.array(datafit3)
-np_cp <- nuts_params(datafit3)
-color_scheme_set("blue")
-mcmc_nuts_energy(np_cp)
-ggsave("STAN/flights_model/figures/datafit3Figures/energyplot.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 140, height = 140, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#pairsplot (note, using just one theta to keep the plot readable)
-theme_set(theme_classic(base_size = 7))
-color_scheme_set("darkgray")
-
-#mcmc_parcoord(posterior_cp, np = np_cp) #generates error: cannot allocate vector of size 889.3 Mb 
-pairs_plot <- mcmc_pairs(posterior_cp, np = np_cp, pars = c("alpha","beta","lambda","kappa","theta[1]"), 
-           off_diag_args = list(size = 0.75))
-
-plots <- pairs_plot$bayesplots # list of 25 ggplot objects (diagonal plots are in slots 1,7,13,19,25)
-
-#Note, to save the grid of the plots, set plots=bayesplot_grid(plots = plots)
-ggsave("STAN/flights_model/figures/datafit3Figures/pairs_plot.jpeg", plot = bayesplot_grid(plots = plots), device = "jpeg", path = NULL,
-  scale = 1, width = 140, height = 140, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#pairsplot for Aki Vehtari with help from Jonah Gabry
-posterior_cp <- posterior_cp%>%
-  mutate(poserior_cp, lambda2 = qlogis)
-
-
-
-pairs_plot2 <-
-  mcmc_pairs(
-    posterior_cp,
-    np = np_cp,
-    pars = c("alpha", "beta", "lambda", "kappa", "theta[1]"),
-    transformations = list(
-      "lambda" = "qlogis",  # or define a function called logit
-      "kappa" = function(x) log(x - 0.1),
-      "theta[1]" = "qlogis"
-    ),
-    off_diag_args = list(size = 0.75)
-  )
-
-plots2 <- pairs_plot2$bayesplots # list of 25 ggplot objects (diagonal plots are in slots 1,7,13,19,25)
-plots2
-#Note, to save the grid of the plots, set plots=bayesplot_grid(plots = plots)
-ggsave("STAN/flights_model/figures/datafit3Figures/pairs_plot3.jpeg", plot = bayesplot_grid(plots = plots2), device = "jpeg", path = NULL,
-  scale = 1, width = 140, height = 140, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-```
-Result: consistent with model output, no divergences found. 
-
-#5 Visualizing results
-posteriors for known elodea-invaded lakes
-```{r}
-theme_set(theme_classic(base_size = 7))  #NOT WORKING HERE --> FIX!
-library(ggplot2)
-library(rstan)
-FigPosteriors <- plot(datafit3, show_density = TRUE, pars=c("theta[321]","theta[322]","theta[324]","theta[376]","theta[518]","theta[300]","theta[309]","theta[376]","theta[347]","avg"), ci_level = 0.5, fill_color = "#99d8c9")
-chvector <- character(length=9)
-chvector <- c("Average", "Lake Hood","Daniels Lake","Stormy Lake","Alexander Lake","Sucker Lake","McKinley Lake","Martin Lake","Bering Lake")
-FigPosteriors <- FigPosteriors + scale_y_continuous(labels=chvector[1:9],breaks=1:9) + labs(x="95% posterior for theta(j)")
-FigPosteriors
-
-ggsave("STAN/flights_model/figures/datafit3Figures/FigPosteriors.bmp", plot = last_plot(), device = "bmp", path = NULL,
-  scale = 1, width = 140, height = 140, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#Better publication version of the above, code not working correctly yet
-posterior <- as.array(datafit3)
-fig <- mcmc_areas(
-  posterior, 
-  pars = c("theta[321]","theta[322]","theta[324]","theta[376]","theta[518]","theta[300]","theta[309]","theta[376]","avg"),
-  prob = 0.5, # 50% intervals
-  prob_outer = 0.95, # 95%
-  point_est = "median"
-)
-
-fig <- fig + scale_y_discrete(labels=chvector[1:9],breaks=1:9) + labs(x="95% posterior for theta(j)")
-fig
-```
-
-
-Creating results table for seaplane bases
-```{r}
-FAAbases <- read.csv("Data/FAAbases.csv", stringsAsFactors = FALSE)
-bases <- FAAbases[,2]
-basesResults <- subset(results, UniqueID %in% bases)
-```
-
-
-Looking for divergences
-```{r}
-partition <- util$partition_div(datafit3)
-div_samples <- partition[[1]]
-nondiv_samples <- partition[[2]]
-
-par(mfrow=c(1, 3))
-
-plot(nondiv_samples$a, nondiv_samples$b,
-     col=c_dark_trans, pch=16, cex=0.8,
-     xlab="a", ylab="b")
-points(div_samples$a, div_samples$b,
-       col="green", pch=16, cex=0.8)
-
-plot(nondiv_samples$a, log(nondiv_samples$sigma),
-     col=c_dark_trans, pch=16, cex=0.8,
-     xlab="a", ylab="log(sigma)")
-points(div_samples$a, log(div_samples$sigma),
-       col="green", pch=16, cex=0.8)
-
-plot(nondiv_samples$b, log(nondiv_samples$sigma),
-     col=c_dark_trans, pch=16, cex=0.8,
-     xlab="b", ylab="log(sigma)")
-points(div_samples$b, log(div_samples$sigma),
-       col="green", pch=16, cex=0.8)
-```
 
 
 PARKING LOT

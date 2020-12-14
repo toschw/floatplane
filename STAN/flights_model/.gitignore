@@ -8,3 +8,5 @@ flights_model3.stan
 flights_model4.rds
 flights_model_woGenQuant.rds
 flights_model_woGenQuant.stan
+old_datafit
+old_analysis
