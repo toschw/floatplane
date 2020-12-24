@@ -592,6 +592,52 @@ YKbases <- spData %>%
   arrange(median)
 ```
 
+4. combined figure with elodea infestations and top 10 seaplane bases
+```{r}
+#seaplane bases
+spDataTop10 <- partialpoolDF%>%
+  filter(LakeID%in%SpBases_List$LakeID)%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameRegion=paste(LakeName," ",Region))
+colnames(spDataTop10)[2] <- "llimit"
+colnames(spDataTop10)[3] <- "median"
+colnames(spDataTop10)[4] <- "ulimit"
+spDataTop10 <- top_n(spDataTop10,10,median)
+  
+#elodea infestations
+ElodeaData2 <- ElodeaData%>%
+  mutate(LakeNameRegion=paste(LakeName," ",Region))
+#combining the two above and creating a seaplane base variable
+prediPlotData <- union(spDataTop10,ElodeaData2)
+prediPlotData$Seaplane_Base <- ifelse(prediPlotData$SeaplaneBase!='',"yes","no")
+prediPlotData$Elodea_present <- ifelse(prediPlotData$Elodea==1,"yes","no")
+
+#first try without legend
+prediPlot <- prediPlotData %>%
+  mutate(LakeNameRegion=fct_reorder(LakeNameRegion,median)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameRegion, xmin = llimit, xmax = ulimit),shape=ifelse(prediPlotData$SeaplaneBase!='',11,19),fatten = 4, size = .2,color=ifelse(prediPlotData$Elodea==1, 'red', 'black'))+
+  ylab("") + xlab("posterior predictive distribution")
+
+#second try with legend
+prediPlot <- prediPlotData %>%
+  mutate(LakeNameRegion=fct_reorder(LakeNameRegion,median)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameRegion, xmin = llimit, xmax = ulimit, shape=Seaplane_Base,color=Elodea_present ))+
+  ylab("") + xlab("posterior predictive distribution")+
+    scale_color_discrete(name = "Elodea present") +
+  scale_shape_discrete(name = "Seaplane Base") +
+  theme(legend.position = c(.2,.7))+
+  scale_color_viridis(discrete=TRUE)
+prediPlot
+ggsave("STAN/flights_model/figures/ManuscriptFigures/prediPlot.tiff", plot = prediPlot, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+
 #Regional statistics
 ```{r}
 #Regional summary table
@@ -620,12 +666,21 @@ topSPB <- flights%>%
 colnames(topSPB)[4] <- "StRegion"
   topSPB <- topSPB%>%
   left_join(select(lakeList2,LakeID,Region),by=c("DestID"="LakeID"))
-  
-topSPB <- topSPB%>%
+
+#Ranking of seaplane bases according to flight trip frequency per region and total 
+topSPB2 <- topSPB%>%
   group_by(LakeName, StRegion,Region)%>%
   summarize(total = sum(AnnualFl_1))%>%
   spread(Region,total)
-write.csv(topSPB,"D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/TopSeaplaneBasesTable.csv")    
+write.csv(topSPB,"D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/TopSeaplaneBasesTable.csv")  
+
+#Ranking of seaplane bases according to number of destinations
+
+topSPB3 <- topSPB%>%
+  group_by(LakeName, StRegion,Region)%>%
+  summarize(total = n_distinct(DestID))%>%
+  spread(Region,total)
+
 ```
 
 
