@@ -37,23 +37,28 @@ theme_set(theme_classic(base_size = 9))
 #importing data archived at https://doi.org/10.18739/A25H7BV1C 
 #data <- read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaac2cc93-04f3-4e5c-b36b-01120993f1d8",      method="libcurl"))
 #ref  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3A8ed27563-55f2-4273-a272-09406d85419b",method="libcurl")) 
-lakeList <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv")
-flights <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long2.csv")
 #lakeList <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv",stringsAsFactor=F)
 #flights <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long.csv",stringsAsFactor=F)
 ```
 
-##setting a common lakeID for all lakes
+
+
+#Preparing data for Arctic Data Center archive and setting a common lakeID for all lakes
+This part was not archived in the Arctic Data Center
 ```{r}
+lakeList <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeList.csv")
+flights_w_runways <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flight_pattern_long2.csv")
 #eliminating non-freshwater take off indicated by Type==3 in LakeList
 s_list <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
+s_list <- s_list%>%
+  select(StartID, UniqueID)
 #s_list <- read.csv("C:/Users/Toby/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/Start_ID_Fetch_data.csv",stringsAsFactor=F)
 lakeList2 <- lakeList%>%
   filter(Type!=3)%>%
   left_join(s_list, by=c("SeaplaneBase"="StartID"))
 #recoding Stlk_# with Lk_#
 lakeList2$LakeID  <- with(lakeList2, ifelse(str_detect(LakeID,"Stlk_"), UniqueID,LakeID))
-lakeList2 <- lakeList2[,1:8]
+lakeList2 <- lakeList2[,1:10]
 
 #Adding HUC6 code and Region name
 LakeRegion <- read.csv("D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/LakeRegion.csv",stringsAsFactor=F)
@@ -64,19 +69,25 @@ lakeList2 <- lakeList2%>%
 lakeList2 %>% 
   group_by(LakeID) %>% 
   filter(n()>1)
+#writing file to archive at data center
+write.csv(lakeList2, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/lakeList2.csv")
 
-#write.csv(lakeList2, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/lakeList2.csv")
-```
-
-#2 Data preparation
-```{r}
 #eliminate flights from runways (amphibious planes)
 runway <- lakeList%>%
   filter(Type==3)
 v <-runway$LakeID
 #drop rows associated with type 3 start and destination locations
-flights <- flights[!(flights$StartID %in% v) & !(flights$DestID %in% v), ]
+flights <- flights_w_runways[!(flights_w_runways$StartID %in% v) & !(flights_w_runways$DestID %in% v), ]
+#writing file to archive at data center
+write.csv(flights, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/flights.csv")
 
+```
+
+#2 Data preparation
+Add link to data import from data center
+flights from ADC link
+lakeList2 from ADC link
+```{r}
 #create ElodeaO and ElodeaD indicating whether origin or destination is known elodea source
 starts <- filter(lakeList, lakeList$SeaplaneBase != "")
 starts <- starts[,c("Elodea","SeaplaneBase")]
@@ -225,6 +236,11 @@ partialpoolResults <- diag_partial%>%
 #diagnosing Gelman-Rubin statistic
 partialpoolResults%>%
   summarise(RhatTotal =sum(Rhat>1.05), mcseTotal =sum(mcse>.1))
+
+#writing results table as csv for online appendix to the paper and for archive in Arctic Data Center
+resultsTable <- partialpoolResults%>%
+  left_join(lakeList2, by="LakeID")
+#write.csv(resultsTable, file="D:/Dropbox/DATA/2015_Schwoerer_floatplane_survey/FlightPattern/resultsTable.csv")
 ```
 Results: None of the lakes had Rhat larger than 1.05. 
 
@@ -686,10 +702,12 @@ topSPB3 <- topSPB%>%
 
 
 
-
-
-
-
+#Flights between Lake Hood and Fairbanks Floatpond 
+```{r}
+ANCtoFAI <- flights%>%
+  filter(StartID=="Stlk_3" &
+           DestID=="Lk_701197")
+```
 
 
 
