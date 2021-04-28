@@ -23,9 +23,13 @@ library(data.table)
 library(tidyverse)
 library(loo)
 
-#importing data archived and update below links before running this Rmd file 
+#importing data archived and update below links before running this Rmd file (for windows users)
 flights <- read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Af851caef-79de-4142-9b57-c2d7e68dd460",      method="libcurl"))
 lakeList2  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaa8e4e61-2d4a-481d-95c6-0901c269e7d8",method="libcurl"))
+
+#Mac user try this to get the data
+#flights <- read.csv("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Af851caef-79de-4142-9b57-c2d7e68dd460")
+#lakeList2  <-  read.csv("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaa8e4e61-2d4a-481d-95c6-0901c269e7d8")
 ```
 
 ##2 Data preparation
