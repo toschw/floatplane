@@ -31,12 +31,12 @@ lakeList2  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3
 ##2 Data preparation
 ```{r}
 #create ElodeaO and ElodeaD indicating whether origin or destination is known elodea source
-starts <- filter(lakeList, lakeList$SeaplaneBase != "")
+starts <- filter(lakeList2, lakeList2$SeaplaneBase != "")
 starts <- starts[,c("Elodea","SeaplaneBase")]
 flights <- flights%>%
   left_join(starts,by=c("StartID"="SeaplaneBase"))
 names(flights)[names(flights)=="Elodea"] <- "ElodeaO"
-dest <- lakeList[,c("Elodea","LakeID")]
+dest <- lakeList2[,c("Elodea","LakeID")]
 flights <- flights%>%
   inner_join(dest,by=c("DestID"="LakeID"))
 names(flights)[names(flights)=="Elodea"] <- "ElodeaD"
