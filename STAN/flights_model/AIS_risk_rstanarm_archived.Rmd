@@ -1,5 +1,5 @@
 ---
-title: "AIS seaplane transmission risk "
+title: "AIS introduction risk analysis"
 author: ""
 date: "December 30 2020"
 output: html_document
@@ -9,7 +9,8 @@ editor_options:
 #Hierarchical model using rstanarm for estimating destination specific probability distribution of introducing AIS to lake j  
 
 ##1 Set up and data import
-load packages, read in and prepare data for analysis 
+Note, update url-links below for the following dataset archived at the NSF Arctic Data Center
+Tobias Schwoerer. 2020. A survey of 2015 Alaska seaplane operations with predictions of transmission risk for aquatic invasive plants. Arctic Data Center.
 ```{r}
 library(shinystan)
 library(bayesplot)
@@ -23,6 +24,7 @@ library(data.table)
 library(tidyverse)
 library(loo)
 
+
 #importing data archived and update below links before running this Rmd file (for windows users)
 flights <- read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Af851caef-79de-4142-9b57-c2d7e68dd460",      method="libcurl"))
 lakeList2  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaa8e4e61-2d4a-481d-95c6-0901c269e7d8",method="libcurl"))
@@ -30,6 +32,7 @@ lakeList2  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3
 #Mac user try this to get the data
 #flights <- read.csv("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Af851caef-79de-4142-9b57-c2d7e68dd460")
 #lakeList2  <-  read.csv("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaa8e4e61-2d4a-481d-95c6-0901c269e7d8")
+
 ```
 
 ##2 Data preparation
@@ -147,7 +150,7 @@ intro_avg(partialpool)
 partialpoolDF <- as.data.frame(partialpool)
 partialpoolDF <- rownames_to_column(partialpoolDF, var="LakeID")
 
-#save summary of fitted model as data.frame, remember this is in log-odds, so further down we add the above code which shifted results from logit to proportion space. 
+#save summary of fitted model as data.frame, remember this is in log-odds, so further down we add the above code which shifted results from logit to normal space. 
 summary(fit_partialpool)
 diag_partial <-as.data.frame(summary(fit_partialpool))
 #moving rownames into column
@@ -173,7 +176,7 @@ partialpoolResults%>%
 #writing results table as csv for online appendix to the paper and for archive in Arctic Data Center
 resultsTable <- partialpoolResults%>%
   left_join(lakeList2, by="LakeID")
-#write.csv(resultsTable, file="/resultsTable.csv")
+write.csv(resultsTable, file="/OnlineAppendix2.csv")
 ```
 
 ##6 Diagnostics for partial pooling model
@@ -185,7 +188,7 @@ rhat_fig <- plot(fit_partialpool, "rhat")
 rhat_fig
 ess_fig <- plot(fit_partialpool, "ess")
 ess_fig
-ggsave("/ess_fig.tiff", plot = last_plot(), device = "tiff", path = NULL,
+ggsave("/FigA5.tiff", plot = last_plot(), device = "tiff", path = NULL,
   scale = 1, width = 90, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 
@@ -221,7 +224,7 @@ grid.arrange(
   arrangeGrob(grobs = ppcs_partialpool, nrow = 2)
 )
 
-ggsave("STAN/flights_model/figures/ManuscriptFigures/t_stats.tiff", plot = last_plot(), device = "tiff", path = NULL,
+ggsave("/FigA3.tiff", plot = last_plot(), device = "tiff", path = NULL,
   scale = 1, width = 90, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 
@@ -229,7 +232,7 @@ ggsave("STAN/flights_model/figures/ManuscriptFigures/t_stats.tiff", plot = last_
 replicate <- pp_check(fit_partialpool, plotfun = "hist", nreps = 15, binwidth = 0.05) +
   xlab("AIS introduction rate") + ylab("Frequency") 
 replicate
-ggsave("/replicate.tiff", plot = replicate, device = "tiff", path = NULL,
+ggsave("/FigA4.tiff", plot = replicate, device = "tiff", path = NULL,
   scale = 1, width = 140, height = 140, units = "mm",
   dpi = 300, limitsize = TRUE)
 
@@ -263,7 +266,7 @@ levels(traceplot$data$parameter)[3] <- "Naknek Lake"
 traceplot <- traceplot + xlab("iterations after warm up") +
                           scale_y_continuous(expression(paste( alpha[j])))
 traceplot
-ggsave("/trace_plots.tiff", plot = traceplot, device = "tiff", path = NULL,
+ggsave("/FigA6.tiff", plot = traceplot, device = "tiff", path = NULL,
   scale = 1, width = 90, height = 140, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
@@ -297,29 +300,8 @@ compareModels <- ggplot(plotdata, aes(x = observed, y = median, ymin = lb, ymax 
   scale_x_continuous(breaks = c(0.25,0.50,0.75,1.0)) +
   labs(x = "Observed y / n", y = expression(paste("Predicted, ",theta["j"])))
 compareModels
-ggsave("/compareModels.tiff", plot = compareModels, device = "tiff", path = NULL,
+ggsave("/FigA2.tiff", plot = compareModels, device = "tiff", path = NULL,
   scale = 1, width = 140, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#partial pool model plot
-theme_set(theme_classic(base_size = 9))
-partialPlot <- ggplot(subset(plotdata,model=="partial pooling"), aes(x = observed, y = median, ymin = lb, ymax = ub)) +
-  geom_abline(intercept = 0, slope = 1, color = "skyblue") + 
-  geom_linerange(color = "gray60", size = 0.75) + 
-  geom_point(size = 2.5, shape = 21, fill = "gray30", color = "white", stroke = 0.2) + 
-  geom_point(data=subset(highlight_plot,model=="partial pooling"), 
-             aes(x=observed,y=median), 
-             color='red',
-             size=2.5) +
-  ggrepel::geom_label_repel(data = subset(highlight_plot,model=="partial pooling"),aes(label=LakeName), 
-                            hjust="inward",vjust=14, size=3, point.padding = NA, segment.alpha=0.3)+
-  coord_fixed() +
-  scale_x_continuous(breaks = c(0.25,0.50,0.75,1.0)) +
-  labs(x = "Observed y / n", y = expression(paste("Predicted, ",theta["j"])))
-partialPlot
-
-ggsave("/partialPlot.tiff", plot = partialPlot, device = "tiff", path = NULL,
-  scale = 1, width = 140, height = 140, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
 
@@ -458,19 +440,12 @@ library(cowplot)
 theme_set(theme_cowplot(font_size=7))
 RegionPlot <-plot_grid(CIplot,Gulfplot,KAplot,Kplot,Kuskoplot,BBplot,YKplot,NSplot,  ncol = 2, align = "h", axis = "bt", rel_widths = c(1, 1) )
 RegionPlot
-ggsave("/RegionPlot.tiff", plot = RegionPlot, device = "tiff",
+ggsave("/Fig3.tiff", plot = RegionPlot, device = "tiff",
   path = NULL,
   scale = 1, width = 140, height = 200, units = "mm",
   dpi = 300, limitsize = TRUE)
-
-RegionPlot2 <-plot_grid(YKplotTest,NSplotTest,  ncol = 2, align = "h", axis = "bt", rel_widths = c(1, 1) )
-RegionPlot2
-ggsave("/RegionPlot3.tiff", plot = RegionPlot2, device = "tiff",
-  path = NULL,
-  scale = 1, width = 140, height = 90, units = "mm",
-  dpi = 300, limitsize = TRUE)
 ```
-
+Note, the invasion scenario for the Fairbanks Floatpond used the same code as above after in lakeList2 changing the Elodea variable for Fairbanks Floatpond from 0 to 1 for the scenario run, then saving the Yukon and North Slope as Fig4.   
 
 2. Elodea invaded lakes
 ```{r}
@@ -513,30 +488,9 @@ spPlot<- spData %>%
   #geom_point(data = pick(~Elodea == 1), colour = "red")+
   ylab("") + xlab("posterior predictive distribution") 
 spPlot
-ggsave("/SeaplaneBases.tiff", plot = spPlot, device = "tiff", path = NULL,
+ggsave("/FigA7.tiff", plot = spPlot, device = "tiff", path = NULL,
   scale = 1, width = 140, height = 200, units = "mm",
   dpi = 300, limitsize = TRUE)
-
-#for a subset of the above, where median >0.07
-spData_H <-spData %>%
-  filter(median>0.07)
-spPlot_H<- spData_H %>%
-  mutate(LakeNameCity=fct_reorder(LakeNameCity,median)) %>%
-  ggplot()+
-  theme_set(theme_classic(base_size = 9))+
-  geom_pointrange(aes(x = median, y = LakeNameCity, xmin = llimit, xmax = ulimit), shape=19,fatten = 4, size = .2,color=ifelse(spData_H$Elodea==1, 'red', 'black'))+
-  ylab("") + xlab("posterior predictive distribution") +xlim(0, 1)
-spPlot_H
-
-ggsave("/SeaplaneBases_H.tiff", plot = spPlot_H, device = "tiff", path = NULL,
-  scale = 1, width = 140, height = 140
-  , units = "mm",
-  dpi = 300, limitsize = TRUE)
-
-#Yukon based seaplane bases
-YKbases <- spData %>%
-  filter(Region=="Yukon")%>%
-  arrange(median)
 ```
 
 4. combined figure with elodea infestations and top 10 seaplane bases
@@ -559,14 +513,6 @@ prediPlotData <- union(spDataTop10,ElodeaData2)
 prediPlotData$Seaplane_Base <- ifelse(prediPlotData$SeaplaneBase!='',"yes","no")
 prediPlotData$Elodea_present <- ifelse(prediPlotData$Elodea==1,"yes","no")
 
-#first try without legend
-prediPlot <- prediPlotData %>%
-  mutate(LakeNameRegion=fct_reorder(LakeNameRegion,median)) %>%
-  ggplot()+
-  theme_set(theme_classic(base_size = 9))+
-  geom_pointrange(aes(x = median, y = LakeNameRegion, xmin = llimit, xmax = ulimit),shape=ifelse(prediPlotData$SeaplaneBase!='',11,19),fatten = 4, size = .2,color=ifelse(prediPlotData$Elodea==1, 'red', 'black'))+
-  ylab("") + xlab("posterior predictive distribution")
-
 #second try with legend
 prediPlot <- prediPlotData %>%
   mutate(LakeNameRegion=fct_reorder(LakeNameRegion,median)) %>%
@@ -579,7 +525,7 @@ prediPlot <- prediPlotData %>%
   theme(legend.position = c(.2,.7))+
   scale_color_viridis(discrete=TRUE)
 prediPlot
-ggsave("/prediPlot.tiff", plot = prediPlot, device = "tiff", path = NULL,
+ggsave("/Fig2.tiff", plot = prediPlot, device = "tiff", path = NULL,
   scale = 1, width = 140, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
@@ -599,6 +545,6 @@ topSPB2 <- topSPB%>%
   group_by(LakeName, StRegion,Region)%>%
   summarize(total = sum(AnnualFl_1))%>%
   spread(Region,total)
-#write.csv(topSPB,"/TopSeaplaneBasesTable.csv")  
+write.csv(topSPB,"/OnlineAppendix3.csv")  
 ```
 
