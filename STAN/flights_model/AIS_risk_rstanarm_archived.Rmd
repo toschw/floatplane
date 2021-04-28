@@ -94,6 +94,11 @@ summary_stats <- function(posterior) {
   x <- invlogit(posterior)  # log-odds -> probabilities
   t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
 }
+summary_mean <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, mean)) 
+}
+
 options(mc.cores = parallel::detectCores())
 SEED <- 101
 wi_prior <- normal(0, 1.4)  # this flat prior from King et al. (2009), also used weakly informative prior on log-odds normal(-1, 1), which is slightly informative on smaller values but compared to this flat prior was not as good in the model comparison below, see hist(plogis(rnorm(1000,-1,1)),100)
@@ -114,8 +119,15 @@ summary_stats <- function(posterior) {
   x <- invlogit(posterior)  # log-odds -> probabilities
   t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
 }
+summary_mean <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, mean)) 
+}
 
 pool <- summary_stats(as.matrix(fit_pool))  # as.matrix extracts the posterior draws
+
+pool_mean <- summary_mean(as.matrix(fit_pool))  # as.matrix extracts the posterior draws
+
 pool <- matrix(pool,  # replicate to give each player the same estimates
                nrow(data), ncol(pool), byrow = TRUE, 
                dimnames = list(data$LakeID, c("10%", "50%", "90%")))
@@ -145,6 +157,9 @@ partialpool <- summary_stats(alphas)
 partialpool <- partialpool[-nrow(partialpool),]
 rownames(partialpool) <- as.character(data$LakeID)
 intro_avg(partialpool)
+
+partialpool_mean <- summary_mean(alphas)[1,]
+partialpool_mean = partialpool_mean[-length(partialpool_mean)]
 
 #create dataframe and moving rownames into columns
 partialpoolDF <- as.data.frame(partialpool)
@@ -328,10 +343,16 @@ colnames(allData)[2] <- "llimit"
 colnames(allData)[3] <- "median"
 colnames(allData)[4] <- "ulimit"
 
+# bring in mean
+allData$mean = partialpool_mean
+# also bring in raw data -- flight #s
+allData = dplyr::left_join(allData, data)
+
 allData <- allData%>%
   left_join(lakeList2,by=c("LakeID"))%>%
   mutate(LakeNameID=paste(LakeName," ",LakeID))
 theme_set(theme_classic(base_size = 9))
+
 #Bristol Bay
 BB <- allData%>%
   filter(Region=="Bristol Bay")
@@ -445,6 +466,124 @@ ggsave("/Fig3.tiff", plot = RegionPlot, device = "tiff",
   scale = 1, width = 140, height = 200, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
+
+```{r}
+# Eric added this plot to swap in the  mean 
+#Bristol Bay
+BB <- allData%>%
+  filter(Region=="Bristol Bay")
+BBplot <- BB %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Bristol Bay")
+BBplot
+
+#Cook Inlet
+CI <- allData%>%
+  filter(Region=="Cook Inlet")
+CIplot <- CI %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Cook Inlet")
+CIplot
+
+#Gulf
+Gulf <- allData%>%
+  filter(Region=="Gulf")
+Gulfplot <- Gulf %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Gulf")
+Gulfplot
+
+#Kuskokwim
+Kusko <- allData%>%
+  filter(Region=="Kuskokwim")
+Kuskoplot <- Kusko %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Kuskokwim")
+Kuskoplot
+
+#North Slope
+NS <- allData%>%
+  filter(Region=="North Slope")
+NSplot <- NS %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("North Slope")
+NSplot
+
+#Yukon
+YK <- allData%>%
+  filter(Region=="Yukon")
+YKplot <- YK %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("waterbodies") + xlab("posterior predictive distribution") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Yukon")
+YKplot
+
+#Knik Arm
+KA <- allData%>%
+  filter(Region=="Knik Arm")
+KAplot <- KA %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Knik Arm")
+KAplot
+
+#Kodiak
+K <- allData%>%
+  filter(Region=="Kodiak")
+Kplot <- K %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Kodiak")
+Kplot
+
+library(cowplot)
+theme_set(theme_cowplot(font_size=7))
+RegionPlot <-plot_grid(CIplot,Gulfplot,KAplot,Kplot,Kuskoplot,BBplot,YKplot,NSplot,  ncol = 2, align = "h", axis = "bt", rel_widths = c(1, 1) )
+RegionPlot
+ggsave("/Fig3_b.tiff", plot = RegionPlot, device = "tiff",
+  path = NULL,
+  scale = 1, width = 140, height = 200, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+
 Note, the invasion scenario for the Fairbanks Floatpond used the same code as above after in lakeList2 changing the Elodea variable for Fairbanks Floatpond from 0 to 1 for the scenario run, then saving the Yukon and North Slope as Fig4.   
 
 2. Elodea invaded lakes
@@ -469,6 +608,31 @@ ggsave("/EPlot.tiff", plot = EPlot, device = "tiff", path = NULL,
   dpi = 300, limitsize = TRUE)
 ```
 
+```{r}
+ppoolDF = partialpoolDF
+ppoolDF$mean = partialpool_mean
+ppoolDF = dplyr::left_join(ppoolDF, data)
+
+ElodeaData <- ppoolDF%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  filter(Elodea==1 & LakeName!="Tanana River")
+names(ElodeaData)[2] <- "llimit"
+names(ElodeaData)[3] <- "median"
+names(ElodeaData)[4] <- "ulimit"
+
+EPlot<- ElodeaData %>%
+  mutate(LakeName=fct_reorder(LakeName,mean*flights)) %>%  #fct_reorder guarantees correct ordering of the labels with data in the plot
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeName, xmin = llimit*flights, xmax = ulimit*flights))+
+  #geom_point(data = pick(~Elodea == 1), colour = "red")+
+  ylab("") + xlab("posterior predictive distribution") 
+EPlot
+ggsave("/EPlot_b.tiff", plot = EPlot, device = "tiff", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
 3. Seaplane bases
 creating subset for seaplane bases, showing 80% posterior intervals
 ```{r}
@@ -489,6 +653,32 @@ spPlot<- spData %>%
   ylab("") + xlab("posterior predictive distribution") 
 spPlot
 ggsave("/FigA7.tiff", plot = spPlot, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 200, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+```{r}
+ppoolDF = partialpoolDF
+ppoolDF$mean = partialpool_mean
+ppoolDF = dplyr::left_join(ppoolDF, data)
+
+spData <- ppoolDF%>%
+  filter(LakeID%in%SpBases_List$LakeID)%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameCity=paste(LakeName," ",SPBaseCity))
+colnames(spData)[2] <- "llimit"
+colnames(spData)[3] <- "median"
+colnames(spData)[4] <- "ulimit"
+
+spPlot<- spData %>%
+  mutate(LakeNameCity=fct_reorder(LakeNameCity,mean*flights)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameCity, xmin = llimit*flights, xmax = ulimit*flights),shape=19,fatten = 4, size = .2,color=ifelse(spData$Elodea==1, 'red', 'black'))+
+  #geom_point(data = pick(~Elodea == 1), colour = "red")+
+  ylab("") + xlab("posterior predictive distribution") 
+spPlot
+ggsave("/FigA7_b.tiff", plot = spPlot, device = "tiff", path = NULL,
   scale = 1, width = 140, height = 200, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
@@ -529,6 +719,47 @@ ggsave("/Fig2.tiff", plot = prediPlot, device = "tiff", path = NULL,
   scale = 1, width = 140, height = 90, units = "mm",
   dpi = 300, limitsize = TRUE)
 ```
+
+```{r}
+ppoolDF = partialpoolDF
+ppoolDF$mean = partialpool_mean
+ppoolDF = dplyr::left_join(ppoolDF, data)
+
+#seaplane bases
+spDataTop10 <- ppoolDF%>%
+  filter(LakeID%in%SpBases_List$LakeID)%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameRegion=paste(LakeName," ",Region))
+colnames(spDataTop10)[2] <- "llimit"
+colnames(spDataTop10)[3] <- "median"
+colnames(spDataTop10)[4] <- "ulimit"
+spDataTop10 <- top_n(spDataTop10,10,mean*flights)
+  
+#elodea infestations
+ElodeaData2 <- ElodeaData%>%
+  mutate(LakeNameRegion=paste(LakeName," ",Region))
+#combining the two above and creating a seaplane base variable
+prediPlotData <- union(spDataTop10,ElodeaData2)
+prediPlotData$Seaplane_Base <- ifelse(prediPlotData$SeaplaneBase!='',"yes","no")
+prediPlotData$Elodea_present <- ifelse(prediPlotData$Elodea==1,"yes","no")
+
+#second try with legend
+prediPlot <- prediPlotData %>%
+  mutate(LakeNameRegion=fct_reorder(LakeNameRegion,mean*flights)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameRegion, xmin = llimit*flights, xmax = ulimit*flights, shape=Seaplane_Base,color=Elodea_present ))+
+  ylab("") + xlab("posterior predictive distribution")+
+    scale_color_discrete(name = "Elodea present") +
+  scale_shape_discrete(name = "Seaplane Base") +
+  theme(legend.position = c(.2,.7))+
+  scale_color_viridis(discrete=TRUE)
+prediPlot
+ggsave("/Fig2_b.tiff", plot = prediPlot, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
 
 #### Regional statistics
 ```{r}
