@@ -1,0 +1,783 @@
+---
+title: "AIS introduction risk analysis"
+author: ""
+date: "December 30 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+#Hierarchical model using rstanarm for estimating destination specific probability distribution of introducing AIS to lake j  
+
+##1 Set up and data import
+Note, update url-links below for the following dataset archived at the NSF Arctic Data Center
+Tobias Schwoerer. 2020. A survey of 2015 Alaska seaplane operations with predictions of transmission risk for aquatic invasive plants. Arctic Data Center.
+```{r}
+library(shinystan)
+library(bayesplot)
+library(ggplot2)
+library(cowplot)
+library(rstan)
+library(dplyr)
+library(tidyr)
+library(foreign)
+library(data.table)
+library(tidyverse)
+library(loo)
+
+
+#importing data archived and update below links before running this Rmd file (for windows users)
+flights <- read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Af851caef-79de-4142-9b57-c2d7e68dd460",      method="libcurl"))
+lakeList2  <-  read.csv(url("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaa8e4e61-2d4a-481d-95c6-0901c269e7d8",method="libcurl"))
+
+#Mac user try this to get the data
+#flights <- read.csv("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Af851caef-79de-4142-9b57-c2d7e68dd460")
+#lakeList2  <-  read.csv("https://arcticdata.io/metacat/d1/mn/v2/object/urn%3Auuid%3Aaa8e4e61-2d4a-481d-95c6-0901c269e7d8")
+```
+
+##2 Data preparation
+```{r}
+#create ElodeaO and ElodeaD indicating whether origin or destination is known elodea source
+starts <- filter(lakeList2, lakeList2$SeaplaneBase != "")
+starts <- starts[,c("Elodea","SeaplaneBase")]
+flights <- flights%>%
+  left_join(starts,by=c("StartID"="SeaplaneBase"))
+names(flights)[names(flights)=="Elodea"] <- "ElodeaO"
+dest <- lakeList2[,c("Elodea","LakeID")]
+flights <- flights%>%
+  inner_join(dest,by=c("DestID"="LakeID"))
+names(flights)[names(flights)=="Elodea"] <- "ElodeaD"
+
+flights$Oeflights <- with(flights,ifelse(ElodeaO==0&ElodeaD==1|ElodeaO==1&ElodeaD==1,AnnualFl_1,0))
+flights$Deflights <- with(flights,ifelse(ElodeaO==1&ElodeaD==0|ElodeaO==1&ElodeaD==1,AnnualFl_1,0))
+
+#summarizing origin 
+origin <- flights%>%
+  group_by(StartID)%>%
+  summarise(eflights=sum(Oeflights),
+            flights=sum(AnnualFl_1))
+ids <- lakeList2[,c("SeaplaneBase","LakeID")]
+origin <- origin%>%  
+  left_join(ids, by=c("StartID"="SeaplaneBase"))
+#drop StartID column
+origin <- origin%>%
+  select(-StartID)
+
+#summarizing destinations
+destinations <- flights%>%
+    group_by(DestID)%>%
+    summarise(eflights=sum(Deflights),
+            flights=sum(AnnualFl_1))
+names(destinations)[names(destinations)=="DestID"] <- "LakeID"
+
+#combining
+data <- bind_rows(origin,destinations)%>%
+  group_by(LakeID)%>%
+    summarise(eflights=sum(eflights),
+            flights=sum(flights))
+
+J <- nrow(data)
+n <- data$flights
+y <- data$eflights
+```
+
+##3 Modeling
+###3.1. Partial pooling model
+Following: https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#observed-vs.estimated-chance-of-success
+```{r}
+library(rstanarm)
+Lake <- data$LakeID
+lake_avgs <- y / n
+tot_avg <- sum(y) / sum(n)
+intro_avg <- function(x) print(format(round(x, digits = 3), nsmall = 3), quote = FALSE)
+summary_stats <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
+}
+summary_mean <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, mean)) 
+}
+
+options(mc.cores = parallel::detectCores())
+SEED <- 101
+wi_prior <- normal(0, 1.4)  # this flat prior from King et al. (2009), also used weakly informative prior on log-odds normal(-1, 1), which is slightly informative on smaller values but compared to this flat prior was not as good in the model comparison below, see hist(plogis(rnorm(1000,-1,1)),100)
+
+fit_partialpool <- 
+  stan_glmer(cbind(y, n - y) ~ (1 | Lake), data = data,  family = binomial("logit"),
+             prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000) #The left-hand side of the formula specifies the binomial outcome by providing the number of successes (hits) and failures (flights from non-sources) for each lake, and the right-hand side indicates that we want an intercept-only model.
+```
+
+###3.2. Complete pooling model and no pooling model
+```{r}
+fit_pool <- 
+  stan_glm(cbind(y, n - y) ~ 1, data = data, family = binomial("logit"),
+             prior_intercept = wi_prior, seed = SEED, adapt_delta = 0.99, iter=10000)
+
+invlogit <- plogis  # function(x) 1/(1 + exp(-x))
+summary_stats <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, quantile, probs = c(0.1, 0.5, 0.9))) 
+}
+summary_mean <- function(posterior) {
+  x <- invlogit(posterior)  # log-odds -> probabilities
+  t(apply(x, 2, mean)) 
+}
+
+pool <- summary_stats(as.matrix(fit_pool))  # as.matrix extracts the posterior draws
+
+pool_mean <- summary_mean(as.matrix(fit_pool))  # as.matrix extracts the posterior draws
+
+pool <- matrix(pool,  # replicate to give each player the same estimates
+               nrow(data), ncol(pool), byrow = TRUE, 
+               dimnames = list(data$LakeID, c("10%", "50%", "90%")))
+intro_avg(pool)
+
+#No pooling model
+fit_nopool <- update(fit_pool, formula = . ~ 0 + Lake, prior = wi_prior)
+nopool <- summary_stats(as.matrix(fit_nopool))
+rownames(nopool) <- as.character(data$LakeID)
+intro_avg(nopool)
+```
+
+##4 Model validation
+Using cross-validation for model checking and comparison, approximating the expected log predictive density (the lower the better) in the third column of the output. Specifically, it is the leave-one-out (loo) approximation to the log predictive density. Even though this approximation is only asymptotically valid, as it likely underestimates the expected log predictive density, the relative ranking of the models is the same as if it would be correctly calculated. https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#partial-pooling
+```{r}
+loo_compare(loo(fit_partialpool), loo(fit_pool), loo(fit_nopool))
+```
+
+##5 Plotting results and creating results table for archiving
+```{r}
+# shift each Lake's estimate by intercept (and then drop intercept)
+shift_draws <- function(draws) {
+  sweep(draws[, -1], MARGIN = 1, STATS = draws[, 1], FUN = "+")
+}
+alphas <- shift_draws(as.matrix(fit_partialpool))
+partialpool <- summary_stats(alphas)
+partialpool <- partialpool[-nrow(partialpool),]
+rownames(partialpool) <- as.character(data$LakeID)
+intro_avg(partialpool)
+
+partialpool_mean <- summary_mean(alphas)[1,]
+partialpool_mean = partialpool_mean[-length(partialpool_mean)]
+
+#create dataframe and moving rownames into columns
+partialpoolDF <- as.data.frame(partialpool)
+partialpoolDF <- rownames_to_column(partialpoolDF, var="LakeID")
+
+#save summary of fitted model as data.frame, remember this is in log-odds, so further down we add the above code which shifted results from logit to normal space. 
+summary(fit_partialpool)
+diag_partial <-as.data.frame(summary(fit_partialpool))
+#moving rownames into column
+diag_partial <- rownames_to_column(diag_partial, var="LakeID")
+#extracting intercept, sigma, mean PPD, log-posterior to save for later
+drop_rows <- diag_partial[(diag_partial$LakeID %in% c("(Intercept)","Sigma[Lake:(Intercept),(Intercept)]","mean_PPD","log-posterior")), ] 
+#dropping the above
+diag_partial <- diag_partial[ !(diag_partial$LakeID %in% c("(Intercept)","Sigma[Lake:(Intercept),(Intercept)]","mean_PPD","log-posterior")), ] #cleaning up LakeID by first extracting string that starts with Lk and ends with ]
+diag_partial$LakeID <- gsub("b[(Intercept) Lake:","",diag_partial$LakeID, fixed=T)
+diag_partial$LakeID <- substr(diag_partial$LakeID, 1, nchar(diag_partial$LakeID)-1)
+#drop columns showing log-odds
+diag_partial <- diag_partial %>%
+  select(LakeID, mcse, n_eff, Rhat)
+
+#joining dataframe to create results table incl. diagnostics, except sigma, mean PPD, log-posterior
+partialpoolResults <- diag_partial%>%
+  left_join(partialpoolDF, by="LakeID")
+
+#diagnosing Gelman-Rubin statistic
+partialpoolResults%>%
+  summarise(RhatTotal =sum(Rhat>1.05), mcseTotal =sum(mcse>.1))
+
+#writing results table as csv for online appendix to the paper and for archive in Arctic Data Center
+resultsTable <- partialpoolResults%>%
+  left_join(lakeList2, by="LakeID")
+#write.csv(resultsTable, file="/OnlineAppendix2.csv")
+```
+
+##6 Diagnostics for partial pooling model
+```{r}
+#Evaluating model convergence and diagnose model through STAN online portal
+#launch_shinystan(fit_partialpool)
+color_scheme_set("blue")
+rhat_fig <- plot(fit_partialpool, "rhat")
+rhat_fig
+ess_fig <- plot(fit_partialpool, "ess")
+ess_fig
+ggsave("/FigA5.tiff", plot = last_plot(), device = "tiff", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+low_ess <- partialpoolResults%>%
+  left_join(lakeList2, by="LakeID")%>%
+  mutate(ess_N=n_eff/10000)%>%
+  filter(ess_N<=0.1)
+
+#number of seaplane bases with low ess
+low_ess%>%
+  filter(SeaplaneBase!="")%>%
+  summarize(count=n())
+```
+
+##7 Graphical posterior predictive checks
+see: https://mc-stan.org/users/documentation/case-studies/pool-binary-trials-rstanarm.html#graphical-posterior-predictive-checks
+```{r}
+#T stats plot
+tstat_plots <- function(model, stats) {
+  lapply(stats, function(stat) {
+    graph <- pp_check(model, plotfun = "stat", stat = stat, 
+                      seed = SEED) # optional arguments
+    graph + xlab(stat) + theme(legend.position = "none")
+  })
+}
+Tstats <- c("mean", "sd", "min","max")
+#ppcs_nopool <- tstat_plots(fit_nopool, Tstats)
+ppcs_partialpool <- tstat_plots(fit_partialpool, Tstats)
+
+library(gridExtra)
+grid.arrange(
+  #arrangeGrob(grobs = ppcs_nopool, nrow = 1, left = "No Pooling"),
+  arrangeGrob(grobs = ppcs_partialpool, nrow = 2)
+)
+
+ggsave("/FigA3.tiff", plot = last_plot(), device = "tiff", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#Distributions of observed data and a random sample of replications
+replicate <- pp_check(fit_partialpool, plotfun = "hist", nreps = 15, binwidth = 0.05) +
+  xlab("AIS introduction rate") + ylab("Frequency") 
+replicate
+ggsave("/FigA4.tiff", plot = replicate, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
+
+#traceplot for convergence check after warm-up
+color_scheme_set("mix-blue-red")
+theme_set(theme_classic(base_size = 9))
+traceplot <- mcmc_trace(fit_partialpool, pars = c("b[(Intercept) Lake:Lk_285505]",
+                                                  "b[(Intercept) Lake:Lk_268]",
+                                                  "b[(Intercept) Lake:Lk_243881]"),
+           facet_args = list(nrow = 3)) 
+
+levels(traceplot$data$parameter)[1] <- "Lake Hood"
+levels(traceplot$data$parameter)[2] <- "Big Lake"
+levels(traceplot$data$parameter)[3] <- "Martin Lake"
+traceplot <- traceplot + xlab("iterations after warm up") +
+                          scale_y_continuous(expression(paste( alpha[j])))
+traceplot
+
+#traceplot for the three lakes with the lowest effective sample size n_eff, also including divergent transitions
+np_model <- nuts_params(fit_partialpool)  #checks and visualizes divergences in the traceplots
+color_scheme_set("mix-blue-red")
+theme_set(theme_classic(base_size = 9))
+traceplot <- mcmc_trace(fit_partialpool, pars = c("b[(Intercept) Lake:Lk_285505]",
+                                                  "b[(Intercept) Lake:Lk_315787]",
+                                                  "b[(Intercept) Lake:Lk_36723]"),
+                                        facet_args = list(nrow = 3),
+                                        np=np_model) 
+levels(traceplot$data$parameter)[1] <- "Lake Hood"
+levels(traceplot$data$parameter)[2] <- "Big River Lakes"
+levels(traceplot$data$parameter)[3] <- "Naknek Lake"
+traceplot <- traceplot + xlab("iterations after warm up") +
+                          scale_y_continuous(expression(paste( alpha[j])))
+traceplot
+ggsave("/FigA6.tiff", plot = traceplot, device = "tiff", path = NULL,
+  scale = 1, width = 90, height = 140, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+
+#### Plotting predicted against the data, Posterior Medians and 80% Intervals
+Below we also create a reference table associated with all the AIS invaded lakes
+```{r}
+library(ggplot2)
+models <- c("no pooling","partial pooling")  #"complete pooling"
+estimates <- rbind(nopool,partialpool)  #pool, nopool, 
+colnames(estimates) <- c("lb", "median", "ub")
+plotdata <- data.frame(estimates, 
+                       observed = rep(lake_avgs, times = length(models)), 
+                       model = rep(models, each = J))
+plotdata$LakeID <- rownames(plotdata)
+#cleaning up LakeID due to rbind command above
+plotdata$LakeID <- with(plotdata,ifelse(model=="partial pooling",substr(plotdata$LakeID, 1, nchar(plotdata$LakeID)-2),plotdata$LakeID))
+plotdata <- plotdata%>%
+  left_join(elodeaLakes,by="LakeID")
+highlight_plot <- plotdata %>% 
+             filter(Elodea==1)
+              
+#comparison plot
+compareModels <- ggplot(plotdata, aes(x = observed, y = median, ymin = lb, ymax = ub)) +
+  geom_abline(intercept = 0, slope = 1, color = "skyblue") + 
+  geom_linerange(color = "gray60", size = 0.75) + 
+  geom_point(size = 2.5, shape = 21, fill = "gray30", color = "white", stroke = 0.2) + 
+  facet_grid(. ~ model) +
+  coord_fixed() +
+  scale_x_continuous(breaks = c(0.25,0.50,0.75,1.0)) +
+  labs(x = "Observed y / n", y = expression(paste("Predicted, ",theta["j"])))
+compareModels
+ggsave("/FigA2.tiff", plot = compareModels, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+
+#### Plotting posterior distributions
+creating reference tables for later analysis and plotting
+```{r}
+elodeaLakes <- lakeList2%>%
+  filter(Elodea==1 & LakeName !="Tanana River")%>%
+  select(LakeID,Elodea,LakeName)%>%
+  mutate(modelID=paste("b[(Intercept) Lake:",LakeID,"]", sep=''))%>%
+  mutate(LakeName=replace(LakeName, LakeName=="Lake Hood/Lake Spenard", "Lake Hood"))
+
+spBases <- unique(lakeList2$SeaplaneBase[grep("^S", lakeList2$SeaplaneBase)])
+SpBases_List <- subset(lakeList2, SeaplaneBase %in% spBases)
+```
+
+1. posterior plots by region
+facet_grid did not show the data nicely, so created individual plots for each region
+More code but nicer plot compared to using facet-grid
+```{r}
+allData <- partialpoolDF
+colnames(allData)[2] <- "llimit"
+colnames(allData)[3] <- "median"
+colnames(allData)[4] <- "ulimit"
+
+# bring in mean
+allData$mean = partialpool_mean
+# also bring in raw data -- flight #s
+allData = dplyr::left_join(allData, data)
+
+allData <- allData%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameID=paste(LakeName," ",LakeID))
+theme_set(theme_classic(base_size = 9))
+
+#Bristol Bay
+BB <- allData%>%
+  filter(Region=="Bristol Bay")
+BBplot <- BB %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Bristol Bay") +xlim(0, 1)
+BBplot
+
+#Cook Inlet
+CI <- allData%>%
+  filter(Region=="Cook Inlet")
+CIplot <- CI %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Cook Inlet") +xlim(0, 1)
+CIplot
+
+#Gulf
+Gulf <- allData%>%
+  filter(Region=="Gulf")
+Gulfplot <- Gulf %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Gulf") +xlim(0, 1)
+Gulfplot
+
+#Kuskokwim
+Kusko <- allData%>%
+  filter(Region=="Kuskokwim")
+Kuskoplot <- Kusko %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Kuskokwim") + xlim(0, 1)
+Kuskoplot
+
+#North Slope
+NS <- allData%>%
+  filter(Region=="North Slope")
+NSplot <- NS %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("North Slope") +xlim(0, 1)
+NSplot
+
+#Yukon
+YK <- allData%>%
+  filter(Region=="Yukon")
+YKplot <- YK %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("waterbodies") + xlab("posterior predictive distribution") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Yukon") +xlim(0, 1)
+YKplot
+
+#Knik Arm
+KA <- allData%>%
+  filter(Region=="Knik Arm")
+KAplot <- KA %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Knik Arm") +xlim(0, 1)
+KAplot
+
+#Kodiak
+K <- allData%>%
+  filter(Region=="Kodiak")
+Kplot <- K %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,median)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameID, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Kodiak") +xlim(0, 1)
+Kplot
+
+library(cowplot)
+theme_set(theme_cowplot(font_size=7))
+RegionPlot <-plot_grid(CIplot,Gulfplot,KAplot,Kplot,Kuskoplot,BBplot,YKplot,NSplot,  ncol = 2, align = "h", axis = "bt", rel_widths = c(1, 1) )
+RegionPlot
+ggsave("Fig3.tiff", plot = RegionPlot, device = "tiff",
+  path = NULL,
+  scale = 1, width = 174, height = 240, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+```{r}
+# Eric added this plot to swap in the  mean 
+#Bristol Bay
+BB <- allData%>%
+  filter(Region=="Bristol Bay")
+BBplot <- BB %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Bristol Bay")
+BBplot
+
+#Cook Inlet
+CI <- allData%>%
+  filter(Region=="Cook Inlet")
+CIplot <- CI %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Cook Inlet")
+CIplot
+
+#Gulf
+Gulf <- allData%>%
+  filter(Region=="Gulf")
+Gulfplot <- Gulf %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Gulf")
+Gulfplot
+
+#Kuskokwim
+Kusko <- allData%>%
+  filter(Region=="Kuskokwim")
+Kuskoplot <- Kusko %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Kuskokwim")
+Kuskoplot
+
+#North Slope
+NS <- allData%>%
+  filter(Region=="North Slope")
+NSplot <- NS %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("North Slope")
+NSplot
+
+#Yukon
+YK <- allData%>%
+  filter(Region=="Yukon")
+YKplot <- YK %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("waterbodies") + xlab("posterior predictive distribution") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Yukon")
+YKplot
+
+#Knik Arm
+KA <- allData%>%
+  filter(Region=="Knik Arm")
+KAplot <- KA %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Knik Arm")
+KAplot
+
+#Kodiak
+K <- allData%>%
+  filter(Region=="Kodiak")
+Kplot <- K %>%
+  mutate(LakeNameID=fct_reorder(LakeNameID,mean*flights)) %>%  
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameID, xmin = llimit*flights, xmax = ulimit*flights), shape=19,fatten = 4, size = .2)+
+  ylab("") + xlab("") +
+  theme(axis.text.y = element_blank(),axis.ticks = element_blank())+
+  ggtitle("Kodiak")
+Kplot
+
+library(cowplot)
+theme_set(theme_cowplot(font_size=7))
+RegionPlot <-plot_grid(CIplot,Gulfplot,KAplot,Kplot,Kuskoplot,BBplot,YKplot,NSplot,  ncol = 2, align = "h", axis = "bt", rel_widths = c(1, 1) )
+RegionPlot
+ggsave("Fig3_b.tiff", plot = RegionPlot, device = "tiff",
+  path = NULL,
+  scale = 1, width = 174, height = 240, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+
+Note, the invasion scenario for the Fairbanks Floatpond used the same code as above after in lakeList2 changing the Elodea variable for Fairbanks Floatpond from 0 to 1 for the scenario run, then saving the Yukon and North Slope as Fig4.   
+
+2. Elodea invaded lakes
+```{r}
+ElodeaData <- partialpoolDF%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  filter(Elodea==1 & LakeName!="Tanana River")
+colnames(ElodeaData)[2] <- "llimit"
+colnames(ElodeaData)[3] <- "median"
+colnames(ElodeaData)[4] <- "ulimit"
+
+EPlot<- ElodeaData %>%
+  mutate(LakeName=fct_reorder(LakeName,median)) %>%  #fct_reorder guarantees correct ordering of the labels with data in the plot
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeName, xmin = llimit, xmax = ulimit))+
+  #geom_point(data = pick(~Elodea == 1), colour = "red")+
+  ylab("") + xlab("posterior predictive distribution") 
+EPlot
+ggsave("/EPlot.tiff", plot = EPlot, device = "tiff", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+```{r}
+ppoolDF = partialpoolDF
+ppoolDF$mean = partialpool_mean
+ppoolDF = dplyr::left_join(ppoolDF, data)
+
+ElodeaData <- ppoolDF%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  filter(Elodea==1 & LakeName!="Tanana River")
+names(ElodeaData)[2] <- "llimit"
+names(ElodeaData)[3] <- "median"
+names(ElodeaData)[4] <- "ulimit"
+
+EPlot<- ElodeaData %>%
+  mutate(LakeName=fct_reorder(LakeName,mean*flights)) %>%  #fct_reorder guarantees correct ordering of the labels with data in the plot
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeName, xmin = llimit*flights, xmax = ulimit*flights))+
+  #geom_point(data = pick(~Elodea == 1), colour = "red")+
+  ylab("") + xlab("posterior predictive distribution") 
+EPlot
+ggsave("/EPlot_b.tiff", plot = EPlot, device = "tiff", path = NULL,
+  scale = 1, width = 90, height = 90, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+3. Seaplane bases
+creating subset for seaplane bases, showing 80% posterior intervals
+```{r}
+spData <- partialpoolDF%>%
+  filter(LakeID%in%SpBases_List$LakeID)%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameCity=paste(LakeName," ",SPBaseCity))
+colnames(spData)[2] <- "llimit"
+colnames(spData)[3] <- "median"
+colnames(spData)[4] <- "ulimit"
+
+spPlot<- spData %>%
+  mutate(LakeNameCity=fct_reorder(LakeNameCity,median)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameCity, xmin = llimit, xmax = ulimit),shape=19,fatten = 4, size = .2,color=ifelse(spData$Elodea==1, 'red', 'black'))+
+  #geom_point(data = pick(~Elodea == 1), colour = "red")+
+  ylab("") + xlab("posterior predictive distribution") 
+spPlot
+ggsave("/FigA7.tiff", plot = spPlot, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 200, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+```{r}
+ppoolDF = partialpoolDF
+ppoolDF$mean = partialpool_mean
+ppoolDF = dplyr::left_join(ppoolDF, data)
+
+spData <- ppoolDF%>%
+  filter(LakeID%in%SpBases_List$LakeID)%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameCity=paste(LakeName," ",SPBaseCity))
+colnames(spData)[2] <- "llimit"
+colnames(spData)[3] <- "median"
+colnames(spData)[4] <- "ulimit"
+
+spPlot<- spData %>%
+  mutate(LakeNameCity=fct_reorder(LakeNameCity,mean*flights)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameCity, xmin = llimit*flights, xmax = ulimit*flights),shape=19,fatten = 4, size = .2,color=ifelse(spData$Elodea==1, 'red', 'black'))+
+  #geom_point(data = pick(~Elodea == 1), colour = "red")+
+  ylab("") + xlab("posterior predictive distribution") 
+spPlot
+ggsave("/FigA7_b.tiff", plot = spPlot, device = "tiff", path = NULL,
+  scale = 1, width = 140, height = 200, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+4. combined figure with elodea infestations and top 10 seaplane bases
+```{r}
+#seaplane bases
+spDataTop10 <- partialpoolDF%>%
+  filter(LakeID%in%SpBases_List$LakeID)%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameRegion=paste(LakeName," ",Region))
+colnames(spDataTop10)[2] <- "llimit"
+colnames(spDataTop10)[3] <- "median"
+colnames(spDataTop10)[4] <- "ulimit"
+spDataTop10 <- top_n(spDataTop10,10,median)
+  
+#elodea infestations
+ElodeaData2 <- ElodeaData%>%
+  mutate(LakeNameRegion=paste(LakeName," ",Region))%>%
+  select(-c('flights', 'eflights','mean'))
+#combining the two above and creating a seaplane base variable
+prediPlotData <- union(spDataTop10,ElodeaData2)
+prediPlotData$Seaplane_Base <- ifelse(prediPlotData$SeaplaneBase!='',"yes","no")
+prediPlotData$Elodea_present <- ifelse(prediPlotData$Elodea==1,"yes","no")
+
+#second try with legend
+prediPlot1 <- prediPlotData %>%
+  mutate(LakeNameRegion=fct_reorder(LakeNameRegion,median)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = median, y = LakeNameRegion, xmin = llimit, xmax = ulimit, shape=Seaplane_Base,color=Elodea_present ),show.legend = FALSE)+
+  ylab("") + xlab(expression(paste("posterior, ", theta[])))+
+  scale_color_discrete(name = "Elodea present") +
+  scale_shape_discrete(name = "Seaplane Base") +
+  theme(legend.position = c(.2,.7))+
+  scale_color_viridis(discrete=TRUE)
+prediPlot1
+```
+
+```{r}
+ppoolDF = partialpoolDF
+ppoolDF$mean = partialpool_mean
+ppoolDF = dplyr::left_join(ppoolDF, data)
+
+#seaplane bases
+spDataTop10 <- ppoolDF%>%
+  filter(LakeID%in%SpBases_List$LakeID)%>%
+  left_join(lakeList2,by=c("LakeID"))%>%
+  mutate(LakeNameRegion=paste(LakeName," ",Region))
+colnames(spDataTop10)[2] <- "llimit"
+colnames(spDataTop10)[3] <- "median"
+colnames(spDataTop10)[4] <- "ulimit"
+spDataTop10 <- top_n(spDataTop10,10,median)
+  
+#elodea infestations
+ElodeaData3 <- ElodeaData%>%
+  mutate(LakeNameRegion=paste(LakeName," ",Region))
+#combining the two above and creating a seaplane base variable
+prediPlotData2 <- union(spDataTop10,ElodeaData3)
+prediPlotData2$Seaplane_Base <- ifelse(prediPlotData$SeaplaneBase!='',"yes","no")
+prediPlotData2$Elodea_present <- ifelse(prediPlotData$Elodea==1,"yes","no")
+
+#second try with legend
+library(viridis)
+prediPlot2 <- prediPlotData2 %>%
+  mutate(LakeNameRegion=fct_reorder(LakeNameRegion,median)) %>%
+  ggplot()+
+  theme_set(theme_classic(base_size = 9))+
+  geom_pointrange(aes(x = mean*flights, y = LakeNameRegion, xmin = llimit*flights, xmax = ulimit*flights, shape=Seaplane_Base,color=Elodea_present ))+
+  ylab("") + xlab("expected flights from Elodea sources")+
+  scale_color_discrete(name = "Elodea present") +
+  scale_shape_discrete(name = "Seaplane Base") +
+  theme(axis.ticks = element_blank(), axis.text.y = element_blank(), legend.position = c(.8,.7))+
+  scale_color_viridis(discrete=TRUE)
+prediPlot2
+
+#combining the two charts above into one
+combinedPlot <- grid.arrange(prediPlot1,prediPlot2, ncol=2)
+
+ggsave("Fig2.tiff", plot = combinedPlot, device = "tiff", path = NULL,
+  scale = 1, width = 174, height = 100, units = "mm",
+  dpi = 300, limitsize = TRUE)
+```
+
+
+#### Regional statistics
+```{r}
+#Top Seaplane bases by region, first matching Destination ID with LakeID to get the destination region
+topSPB <- flights%>%
+  left_join(lakeList2,by=c("StartID"="SeaplaneBase"))%>%
+  select(LakeName,DestID,AnnualFl_1,Region)
+colnames(topSPB)[4] <- "StRegion"
+  topSPB <- topSPB%>%
+  left_join(select(lakeList2,LakeID,Region),by=c("DestID"="LakeID"))
+
+#Ranking of seaplane bases according to flight trip frequency per region and total 
+topSPB2 <- topSPB%>%
+  group_by(LakeName, StRegion,Region)%>%
+  summarize(total = sum(AnnualFl_1))%>%
+  spread(Region,total)
+write.csv(topSPB,"/OnlineAppendix3.csv")  
+```
+
